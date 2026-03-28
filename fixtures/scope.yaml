@@ -1,0 +1,96 @@
+# AegisOSINT Example Scope File
+# This file defines the authorized scope for bug bounty recon
+# IMPORTANT: Only include targets you are explicitly authorized to test
+
+# Scope identifier and name
+id: "example-bounty"
+name: "Example Bug Bounty Program"
+description: "Authorized scope for Example Corp bug bounty program"
+
+# Program metadata (optional)
+program:
+  name: "Example Bug Bounty Program"
+  platform: "hackerone"
+  url: "https://hackerone.com/example"
+  program_type: "public"
+
+# In-scope targets - these are authorized for testing
+in_scope:
+  # Domains and wildcards
+  domains:
+    - "example.com"
+    - "api.example.com"
+    - "app.example.com"
+    - "www.example.com"
+    - "*.example.com"
+    - "*.api.example.com"
+    
+  # CIDR ranges
+  cidrs:
+    - "203.0.113.0/24"
+    - "198.51.100.0/24"
+    
+  # ASN numbers
+  asns:
+    - "AS64496"
+    
+  # Specific URLs
+  urls:
+    - "https://example.com/api/"
+    - "https://app.example.com/"
+    
+  # GitHub repositories (for code analysis)
+  repositories:
+    - "github.com/example-corp/public-api"
+    
+  # Explicit exclusions within wildcards
+  exclude:
+    - "admin.example.com"
+    - "internal.example.com"
+
+# Out-of-scope targets - explicitly excluded
+out_of_scope:
+  domains:
+    - "admin.example.com"
+    - "internal.example.com"
+    - "staging.example.com"
+    - "mail.example.com"
+    
+  cidrs:
+    - "10.0.0.0/8"
+    - "192.168.0.0/16"
+    - "172.16.0.0/12"
+    
+  urls:
+    - "https://example.com/admin/"
+    - "https://internal.example.com/"
+
+# Program-specific testing rules
+rules:
+  # Allowed testing types
+  allowed:
+    - "passive_recon"
+    - "subdomain_enumeration"
+    - "web_crawling"
+    - "technology_fingerprinting"
+    - "port_scanning"
+    
+  # Prohibited activities (always enforced)
+  prohibited:
+    - "brute_force"
+    - "dos_testing"
+    - "social_engineering"
+    - "exploit_development"
+    - "credential_stuffing"
+    
+  # Rate limits from program
+  rate_limits:
+    requests_per_second: 10
+    max_concurrent: 5
+
+# Notes for the tester
+notes: |
+  - Testing window: 24/7
+  - Safe harbor: Yes
+  - Report to: security@example.com
+  - Do not test authentication endpoints during business hours

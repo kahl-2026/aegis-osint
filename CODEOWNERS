@@ -1,0 +1,29 @@
+# Code Owners for AegisOSINT
+# These owners will be requested for review when changes are made
+
+# Default owners for everything
+*       @maintainer
+
+# Core modules require senior review
+/src/scope/     @security-lead @maintainer
+/src/policy/    @security-lead @maintainer
+/src/storage/   @maintainer
+
+# Offensive modules - extra scrutiny
+/src/offensive/ @security-lead @maintainer
+
+# Defensive modules
+/src/defensive/ @security-lead
+
+# CLI and UX
+/src/cli/       @maintainer
+
+# Documentation
+*.md            @maintainer
+/docs/          @maintainer
+
+# CI/CD configuration
+/.github/       @maintainer
+
+# Security-sensitive files
+SECURITY.md     @security-lead @maintainer

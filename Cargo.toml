@@ -1,0 +1,119 @@
+[package]
+name = "aegis-osint"
+version = "0.1.0"
+edition = "2021"
+authors = ["AegisOSINT Contributors"]
+description = "Production-grade CLI platform for authorized bug bounty workflows and defensive OSINT operations"
+license = "MIT"
+repository = "https://github.com/yourusername/aegis-osint"
+keywords = ["osint", "security", "bug-bounty", "reconnaissance", "defensive"]
+categories = ["command-line-utilities", "network-programming"]
+readme = "README.md"
+
+[lib]
+name = "aegis_osint"
+path = "src/lib.rs"
+
+[[bin]]
+name = "aegis"
+path = "src/main.rs"
+
+[dependencies]
+# CLI Framework
+clap = { version = "4.5", features = ["derive", "env", "color"] }
+clap_complete = "4.5"
+
+# Async Runtime
+tokio = { version = "1.36", features = ["full"] }
+
+# HTTP Client
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio", "sqlite", "postgres", "chrono", "uuid"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# DNS Resolution
+trust-dns-resolver = "0.23"
+hickory-resolver = "0.24"
+
+# TLS/Certificates
+rustls = "0.22"
+x509-parser = "0.16"
+
+# Terminal UI
+indicatif = "0.17"
+colored = "2.1"
+console = "0.15"
+dialoguer = "0.11"
+
+# Error Handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utilities
+uuid = { version = "1.7", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+url = { version = "2.5", features = ["serde"] }
+regex = "1.10"
+lazy_static = "1.4"
+once_cell = "1.19"
+dashmap = "5.5"
+
+# IP/Network handling
+ipnetwork = "0.20"
+publicsuffix = "2.2"
+
+# Rate limiting
+governor = "0.6"
+
+# Crypto/Hashing
+sha2 = "0.10"
+base64 = "0.22"
+
+# HTML/Template rendering
+askama = "0.12"
+pulldown-cmark = "0.10"
+
+# Configuration
+config = "0.14"
+directories = "5.0"
+
+# Testing utilities (dev only)
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.10"
+wiremock = "0.6"
+assert_cmd = "2.0"
+predicates = "3.1"
+pretty_assertions = "1.4"
+insta = { version = "1.36", features = ["yaml"] }
+rstest = "0.18"
+proptest = "1.4"
+fake = { version = "2.9", features = ["derive", "chrono"] }
+
+[features]
+default = ["sqlite"]
+sqlite = []
+postgres = []
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.test]
+opt-level = 0
+debug = true

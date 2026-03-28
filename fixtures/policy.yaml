@@ -1,0 +1,185 @@
+# AegisOSINT Policy Configuration
+# Global safety and operational policies
+
+# Policy metadata
+policy:
+  name: "Standard Safety Policy"
+  version: "1.0"
+  description: "Default safety guardrails for authorized OSINT operations"
+
+# Global safety settings
+safety:
+  # Kill switch - immediately halt all operations
+  kill_switch:
+    enabled: false
+    message: "Operations halted by kill switch"
+    
+  # Require scope validation before any operation
+  require_scope_validation: true
+  
+  # Block operations without explicit authorization
+  require_authorization_ack: true
+  
+  # Maximum risk level allowed (low, medium, high, critical)
+  max_risk_level: "high"
+
+# Rate limiting configuration
+rate_limits:
+  # Global rate limit
+  global:
+    requests_per_second: 50
+    burst: 100
+    
+  # Per-module limits
+  modules:
+    discovery:
+      requests_per_second: 20
+      burst: 50
+    web_recon:
+      requests_per_second: 10
+      burst: 30
+    cloud_check:
+      requests_per_second: 5
+      burst: 15
+    dns:
+      requests_per_second: 30
+      burst: 60
+
+# Retry configuration
+retry:
+  max_attempts: 3
+  base_delay_ms: 1000
+  max_delay_ms: 30000
+  exponential_backoff: true
+
+# Timeout configuration (seconds)
+timeouts:
+  http_connect: 10
+  http_read: 30
+  dns_resolve: 5
+  tcp_connect: 10
+
+# Audit logging
+audit:
+  enabled: true
+  log_level: "info"  # debug, info, warn, error
+  log_blocked_actions: true
+  log_scope_checks: true
+  retention_days: 90
+
+# Module-specific policies
+modules:
+  # Subdomain discovery
+  subdomain_discovery:
+    enabled: true
+    methods:
+      - "ct_logs"
+      - "dns_brute"  # Only with wordlist, not exhaustive
+      - "web_archive"
+    max_results: 10000
+    
+  # Port scanning
+  port_scanning:
+    enabled: true
+    # Only common web ports by default
+    allowed_ports:
+      - 80
+      - 443
+      - 8080
+      - 8443
+    scan_type: "connect"  # connect only, no syn scanning
+    
+  # Web crawling
+  web_crawling:
+    enabled: true
+    max_depth: 3
+    max_pages: 1000
+    respect_robots_txt: true
+    allowed_content_types:
+      - "text/html"
+      - "application/javascript"
+      - "application/json"
+      
+  # Technology fingerprinting
+  fingerprinting:
+    enabled: true
+    methods:
+      - "headers"
+      - "html_meta"
+      - "js_libraries"
+      - "css_frameworks"
+      
+  # Cloud exposure checks
+  cloud_exposure:
+    enabled: true
+    providers:
+      - "aws_s3"
+      - "azure_blob"
+      - "gcp_storage"
+    check_public_only: true
+    
+  # Brand monitoring
+  brand_monitoring:
+    enabled: true
+    check_typosquatting: true
+    check_homoglyphs: true
+    max_variations: 1000
+
+# Blocked patterns (never allowed)
+blocked:
+  # Sensitive TLDs
+  tlds:
+    - ".gov"
+    - ".mil"
+    - ".edu"
+    - ".int"
+    
+  # Private/reserved ranges
+  ip_ranges:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+    - "127.0.0.0/8"
+    - "169.254.0.0/16"
+    - "::1/128"
+    - "fc00::/7"
+    - "fe80::/10"
+    
+  # Keywords in targets
+  keywords:
+    - "localhost"
+    - "internal"
+    - "intranet"
+    - "private"
+    - "corp"
+    - "vpn"
+
+# Alerting thresholds
+alerts:
+  # Alert when findings exceed thresholds
+  critical_finding_threshold: 1
+  high_finding_threshold: 5
+  
+  # Alert on rate limit hits
+  rate_limit_alert_threshold: 10
+  
+  # Alert on blocked actions
+  blocked_action_alert_threshold: 5
+
+# Output settings
+output:
+  # Sanitize output to prevent injection
+  sanitize_output: true
+  
+  # Maximum evidence size (KB)
+  max_evidence_size_kb: 1024
+  
+  # Redact sensitive data
+  redact_sensitive: true
+  redact_patterns:
+    - "password"
+    - "api_key"
+    - "apikey"
+    - "secret"
+    - "token"
+    - "credential"
