@@ -129,12 +129,13 @@ impl Config {
 
     /// Initialize derived paths
     fn initialize_paths(&mut self) -> Result<()> {
-        self.data_path = Some(data_dir()?);
+        let derived_data_path = data_dir()?;
+        self.data_path = Some(derived_data_path.clone());
         self.config_path = Some(Self::config_file_path()?);
 
         // Set default database path if not specified
         if self.database.connection.is_empty() {
-            let db_path = self.data_path.as_ref().unwrap().join("aegis.db");
+            let db_path = derived_data_path.join("aegis.db");
             self.database.connection = db_path.to_string_lossy().to_string();
         }
 
@@ -147,8 +148,10 @@ impl Config {
     }
 
     /// Get the data directory path
-    pub fn data_path(&self) -> &PathBuf {
-        self.data_path.as_ref().expect("Config not initialized")
+    pub fn data_path(&self) -> Result<&PathBuf> {
+        self.data_path
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Config data path not initialized"))
     }
 
     /// Get the database connection string

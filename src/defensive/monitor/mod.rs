@@ -109,7 +109,7 @@ impl AttackSurfaceMonitor {
             let url = format!("https://{}/", host);
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(15))
-                .danger_accept_invalid_certs(true)
+                .danger_accept_invalid_certs(false)
                 .build()?;
 
             if let Ok(resp) = client.head(&url).send().await {
@@ -186,6 +186,15 @@ impl AttackSurfaceMonitor {
     async fn check_new_services(&self) -> Result<Vec<ServiceChange>> {
         let mut changes = Vec::new();
         let ports = [80u16, 443, 8080, 8443];
+        let mut seen_changes = std::collections::HashSet::new();
+        let existing_services = self
+            .storage
+            .list_assets(Some(&self.scope.id), Some("service"), None, 20_000)
+            .await?;
+        let existing_set = existing_services
+            .into_iter()
+            .map(|asset| asset.value.to_lowercase())
+            .collect::<std::collections::HashSet<_>>();
 
         let ip_assets = self
             .storage
@@ -207,6 +216,10 @@ impl AttackSurfaceMonitor {
                     .is_some();
 
                     if reachable {
+                        let service_key = format!("{}:{}", host.to_lowercase(), port);
+                        if existing_set.contains(&service_key) || !seen_changes.insert(service_key) {
+                            continue;
+                        }
                         changes.push(ServiceChange {
                             host: host.clone(),
                             port,

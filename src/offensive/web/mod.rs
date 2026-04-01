@@ -26,7 +26,7 @@ impl WebReconEngine {
     pub fn new(scope: Scope, policy: PolicyEngine, storage: Storage) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
-            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_certs(false)
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()?;
 
@@ -242,8 +242,7 @@ impl WebReconEngine {
     fn extract_script_urls(&self, html: &str, base_url: &str) -> Vec<String> {
         let mut urls = Vec::new();
 
-        // Simple regex-like extraction for src attributes
-        // In production, use a proper HTML parser
+        // Best-effort regex extraction for src attributes
         let patterns = [
             r#"src="([^"]+\.js[^"]*)""#,
             r#"src='([^']+\.js[^']*)'"#,

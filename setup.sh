@@ -119,6 +119,8 @@ install_deps_arch() {
         base-devel \
         sqlite \
         openssl \
+        bind \
+        whois \
         pkg-config \
         git \
         curl
@@ -132,6 +134,8 @@ install_deps_debian() {
         build-essential \
         libsqlite3-dev \
         libssl-dev \
+        dnsutils \
+        whois \
         pkg-config \
         git \
         curl \
@@ -146,6 +150,8 @@ install_deps_fedora() {
         gcc \
         sqlite-devel \
         openssl-devel \
+        bind-utils \
+        whois \
         pkgconfig \
         git \
         curl

@@ -67,10 +67,12 @@ cargo install --path .
 ./setup.sh
 
 # Or manually:
-# Arch: sudo pacman -S rust sqlite
-# Debian/Ubuntu: sudo apt install rustc cargo libsqlite3-dev
-# Fedora: sudo dnf install rust cargo sqlite-devel
+# Arch: sudo pacman -S base-devel sqlite openssl bind whois pkg-config git curl
+# Debian/Ubuntu: sudo apt install build-essential libsqlite3-dev libssl-dev dnsutils whois pkg-config git curl ca-certificates
+# Fedora: sudo dnf install gcc sqlite-devel openssl-devel bind-utils whois pkgconfig git curl
 ```
+
+The interactive CLI menu uses arrow-key selection via `dialoguer`, and scan/report output is tuned for readable terminal summaries.
 
 ## Quick Start
 

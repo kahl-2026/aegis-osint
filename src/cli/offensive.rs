@@ -197,12 +197,11 @@ impl OffensiveCommand {
 
         // Initialize progress bar
         let progress = ProgressBar::new(100);
-        progress.set_style(
-            ProgressStyle::default_bar()
-                .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}% {msg}")
-                .unwrap()
-                .progress_chars("█▓░"),
-        );
+        let style = ProgressStyle::default_bar()
+            .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}% {msg}")
+            .unwrap_or_else(|_| ProgressStyle::default_bar())
+            .progress_chars("█▓░");
+        progress.set_style(style);
 
         // Create and run the orchestrator
         let orchestrator = OffensiveOrchestrator::new(

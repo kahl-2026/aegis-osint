@@ -28,6 +28,10 @@ impl BrandMonitor {
     pub fn generate_typosquats(&self) -> Vec<TyposquatVariation> {
         let mut variations = Vec::new();
         let name = self.brand_name.to_lowercase();
+        let chars: Vec<char> = name.chars().collect();
+        if chars.is_empty() {
+            return variations;
+        }
 
         // Character substitution
         let substitutions = [
@@ -47,22 +51,26 @@ impl BrandMonitor {
         }
 
         // Character omission
-        for i in 0..name.len() {
-            let mut omitted = name.clone();
-            omitted.remove(i);
+        for (i, original) in chars.iter().enumerate() {
+            let omitted: String = chars
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, c)| if idx == i { None } else { Some(*c) })
+                .collect();
             variations.push(TyposquatVariation {
                 domain: omitted,
                 technique: "omission".to_string(),
-                original_char: name.chars().nth(i).unwrap().to_string(),
+                original_char: original.to_string(),
                 replacement: String::new(),
             });
         }
 
         // Character duplication
-        for i in 0..name.len() {
-            let c = name.chars().nth(i).unwrap();
+        for (i, c) in chars.iter().enumerate() {
             if c.is_alphabetic() {
-                let duplicated = format!("{}{}{}", &name[..i], c, &name[i..]);
+                let mut duplicated_chars = chars.clone();
+                duplicated_chars.insert(i, *c);
+                let duplicated: String = duplicated_chars.into_iter().collect();
                 variations.push(TyposquatVariation {
                     domain: duplicated,
                     technique: "duplication".to_string(),
@@ -73,15 +81,15 @@ impl BrandMonitor {
         }
 
         // Adjacent key transposition
-        for i in 0..name.len().saturating_sub(1) {
-            let mut chars: Vec<char> = name.chars().collect();
-            chars.swap(i, i + 1);
-            let transposed: String = chars.into_iter().collect();
+        for i in 0..chars.len().saturating_sub(1) {
+            let mut transposed_chars = chars.clone();
+            transposed_chars.swap(i, i + 1);
+            let transposed: String = transposed_chars.into_iter().collect();
             variations.push(TyposquatVariation {
                 domain: transposed,
                 technique: "transposition".to_string(),
-                original_char: format!("{}{}", name.chars().nth(i).unwrap(), name.chars().nth(i+1).unwrap()),
-                replacement: format!("{}{}", name.chars().nth(i+1).unwrap(), name.chars().nth(i).unwrap()),
+                original_char: format!("{}{}", chars[i], chars[i + 1]),
+                replacement: format!("{}{}", chars[i + 1], chars[i]),
             });
         }
 

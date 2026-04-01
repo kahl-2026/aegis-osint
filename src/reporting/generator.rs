@@ -3,6 +3,7 @@
 use crate::storage::{AttackSurfaceSummary, FindingSummary};
 use anyhow::Result;
 use chrono::Utc;
+use pulldown_cmark::{html, Options, Parser};
 
 /// Report generator for various formats
 #[allow(dead_code)]
@@ -266,8 +267,13 @@ This finding may increase external attack surface risk for the mapped asset.\n\n
     /// Generate summary HTML
     pub fn generate_summary_html(&self, summary: &AttackSurfaceSummary) -> Result<String> {
         let md = self.generate_summary_markdown(summary)?;
-        // Simple conversion - in production use a proper markdown parser
-        Ok(format!("<pre>{}</pre>", html_escape(&md)))
+        let parser = Parser::new_ext(&md, Options::all());
+        let mut html_output = String::new();
+        html::push_html(&mut html_output, parser);
+        Ok(format!(
+            "<!DOCTYPE html><html><head><title>Attack Surface Summary</title></head><body>{}</body></html>",
+            html_output
+        ))
     }
 }
 

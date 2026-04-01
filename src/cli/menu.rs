@@ -1,6 +1,6 @@
 //! Interactive menu system for AegisOSINT
 
-use crate::config::Config;
+use crate::config::{data_dir, Config};
 use crate::defensive::DefensiveScanner;
 use crate::offensive::OffensiveOrchestrator;
 use crate::policy::PolicyEngine;
@@ -11,8 +11,13 @@ use crate::utils::validation::{validate_asn, validate_cidr, validate_domain, val
 use anyhow::Result;
 use chrono::Utc;
 use colored::Colorize;
+use dialoguer::{theme::ColorfulTheme, Select};
 use std::io::{self, Write};
 use super::offensive::ScanProfile;
+
+const DEFAULT_MENU_RPS: u32 = 10;
+const DEFAULT_MENU_TIMEOUT_SECS: u32 = 30;
+const DEFAULT_MENU_DB_TYPE: &str = "sqlite";
 
 /// Main menu options
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -114,7 +119,9 @@ impl Menu {
     /// Clear screen
     fn clear(&self) {
         print!("\x1B[2J\x1B[1;1H");
-        io::stdout().flush().unwrap();
+        if let Err(e) = io::stdout().flush() {
+            eprintln!("failed to flush stdout while clearing screen: {}", e);
+        }
     }
 
     /// Print centered text
@@ -131,9 +138,10 @@ impl Menu {
     /// Print the banner
     pub fn print_banner(&self) {
         self.clear();
+        let version_line = format!("║            AegisOSINT v{}              ║", env!("CARGO_PKG_VERSION"));
         println!();
         println!("{}", self.center("╔═══════════════════════════════════════════╗").cyan());
-        println!("{}", self.center("║            AegisOSINT v0.1.0              ║").cyan());
+        println!("{}", self.center(&version_line).cyan());
         println!("{}", self.center("║   Production OSINT for Bug Bounty & Defense  ║").cyan());
         println!("{}", self.center("╚═══════════════════════════════════════════╝").cyan());
         println!();
@@ -151,17 +159,39 @@ impl Menu {
     /// Read user input
     fn read_input(&self, prompt: &str) -> String {
         print!("{}", prompt);
-        io::stdout().flush().unwrap();
+        if let Err(e) = io::stdout().flush() {
+            eprintln!("failed to flush stdout for input prompt: {}", e);
+        }
         
         let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-        input.trim().to_string()
+        match io::stdin().read_line(&mut input) {
+            Ok(_) => input.trim().to_string(),
+            Err(e) => {
+                eprintln!("failed to read input: {}", e);
+                String::new()
+            }
+        }
     }
 
-    /// Read a single character
-    fn read_char(&self, prompt: &str) -> char {
-        let input = self.read_input(prompt);
-        input.chars().next().unwrap_or(' ')
+    fn select_index(&self, prompt: &str, items: &[&str], default: usize) -> usize {
+        Select::with_theme(&ColorfulTheme::default())
+            .with_prompt(prompt)
+            .items(items)
+            .default(default)
+            .interact_opt()
+            .ok()
+            .flatten()
+            .unwrap_or(default)
+    }
+
+    fn truncate_chars(value: &str, max_chars: usize) -> String {
+        let mut chars = value.chars();
+        let truncated: String = chars.by_ref().take(max_chars).collect();
+        if chars.next().is_some() {
+            format!("{}...", truncated)
+        } else {
+            truncated
+        }
     }
 
     /// Wait for enter
@@ -173,48 +203,27 @@ impl Menu {
     pub fn main_menu(&self) -> MainMenuOption {
         self.print_banner();
         self.print_header("Main Menu");
-        
-        println!();
-        println!("  {}  {} Offensive Recon", "1".cyan().bold(), "🎯".to_string());
-        println!("     {}", "Bug bounty reconnaissance operations".dimmed());
-        println!();
-        println!("  {}  {} Defensive Monitor", "2".cyan().bold(), "🛡️".to_string());
-        println!("     {}", "Attack surface monitoring".dimmed());
-        println!();
-        println!("  {}  {} Manage Scopes", "3".cyan().bold(), "📋".to_string());
-        println!("     {}", "Import, view, and validate scopes".dimmed());
-        println!();
-        println!("  {}  {} View Findings", "4".cyan().bold(), "🔍".to_string());
-        println!("     {}", "Browse and verify discoveries".dimmed());
-        println!();
-        println!("  {}  {} Generate Reports", "5".cyan().bold(), "📊".to_string());
-        println!("     {}", "Export JSON, Markdown, HTML reports".dimmed());
-        println!();
-        println!("  {}  {} Manage Assets", "6".cyan().bold(), "🌐".to_string());
-        println!("     {}", "View and track discovered assets".dimmed());
-        println!();
-        println!("  {}  {} Settings", "7".cyan().bold(), "⚙️".to_string());
-        println!("     {}", "Configure rate limits, database, etc.".dimmed());
-        println!();
-        println!("  {}  {} Help", "h".cyan().bold(), "❓".to_string());
-        println!("     {}", "Documentation and usage guide".dimmed());
-        println!();
-        println!("  {}  {} Quit", "q".cyan().bold(), "🚪".to_string());
-        println!();
-
-        let choice = self.read_char(&format!("  {} ", "Select option:".bold()));
-        
-        match choice {
-            '1' => MainMenuOption::OffensiveMode,
-            '2' => MainMenuOption::DefensiveMode,
-            '3' => MainMenuOption::ManageScopes,
-            '4' => MainMenuOption::ViewFindings,
-            '5' => MainMenuOption::GenerateReports,
-            '6' => MainMenuOption::ManageAssets,
-            '7' => MainMenuOption::Settings,
-            'h' | 'H' => MainMenuOption::Help,
-            'q' | 'Q' => MainMenuOption::Quit,
-            _ => MainMenuOption::Help,
+        let options = [
+            "🎯 Offensive Recon — Bug bounty reconnaissance operations",
+            "🛡️ Defensive Monitor — Attack surface monitoring",
+            "📋 Manage Scopes — Import, view, and validate scopes",
+            "🔍 View Findings — Browse and verify discoveries",
+            "📊 Generate Reports — Export JSON, Markdown, HTML reports",
+            "🌐 Manage Assets — View and track discovered assets",
+            "⚙️ Settings — Configure rate limits, database, etc.",
+            "❓ Help — Documentation and usage guide",
+            "🚪 Quit",
+        ];
+        match self.select_index("Select option", &options, 0) {
+            0 => MainMenuOption::OffensiveMode,
+            1 => MainMenuOption::DefensiveMode,
+            2 => MainMenuOption::ManageScopes,
+            3 => MainMenuOption::ViewFindings,
+            4 => MainMenuOption::GenerateReports,
+            5 => MainMenuOption::ManageAssets,
+            6 => MainMenuOption::Settings,
+            7 => MainMenuOption::Help,
+            _ => MainMenuOption::Quit,
         }
     }
 
@@ -222,31 +231,18 @@ impl Menu {
     pub fn offensive_menu(&self) -> OffensiveMenuOption {
         self.print_banner();
         self.print_header("Offensive Recon 🎯");
-        
-        println!();
-        println!("  {}  {} Run Reconnaissance", "1".cyan().bold(), "▶".green());
-        println!("     {}", "Start a new recon scan against a scope".dimmed());
-        println!();
-        println!("  {}  {} View Running Scans", "2".cyan().bold(), "📡".to_string());
-        println!("     {}", "Check status of active operations".dimmed());
-        println!();
-        println!("  {}  {} Stop Scan", "3".cyan().bold(), "⏹".red());
-        println!("     {}", "Terminate a running scan".dimmed());
-        println!();
-        println!("  {}  {} View Results", "4".cyan().bold(), "📋".to_string());
-        println!("     {}", "Browse scan results and findings".dimmed());
-        println!();
-        println!("  {}  ← Back to Main Menu", "b".cyan().bold());
-        println!();
-
-        let choice = self.read_char(&format!("  {} ", "Select option:".bold()));
-        
-        match choice {
-            '1' => OffensiveMenuOption::RunRecon,
-            '2' => OffensiveMenuOption::ViewStatus,
-            '3' => OffensiveMenuOption::StopScan,
-            '4' => OffensiveMenuOption::ViewResults,
-            'b' | 'B' | 'q' | 'Q' => OffensiveMenuOption::Back,
+        let options = [
+            "▶ Run Reconnaissance — Start a new recon scan against a scope",
+            "📡 View Running Scans — Check status of active operations",
+            "⏹ Stop Scan — Terminate a running scan",
+            "📋 View Results — Browse scan results and findings",
+            "↩ Back to Main Menu",
+        ];
+        match self.select_index("Select option", &options, 0) {
+            0 => OffensiveMenuOption::RunRecon,
+            1 => OffensiveMenuOption::ViewStatus,
+            2 => OffensiveMenuOption::StopScan,
+            3 => OffensiveMenuOption::ViewResults,
             _ => OffensiveMenuOption::Back,
         }
     }
@@ -255,31 +251,18 @@ impl Menu {
     pub fn defensive_menu(&self) -> DefensiveMenuOption {
         self.print_banner();
         self.print_header("Defensive Monitor 🛡️");
-        
-        println!();
-        println!("  {}  {} Start Monitoring", "1".cyan().bold(), "▶".green());
-        println!("     {}", "Begin attack surface monitoring".dimmed());
-        println!();
-        println!("  {}  {} Stop Monitoring", "2".cyan().bold(), "⏹".red());
-        println!("     {}", "Stop active monitors".dimmed());
-        println!();
-        println!("  {}  {} View Alerts", "3".cyan().bold(), "🔔".to_string());
-        println!("     {}", "Review recent alerts and changes".dimmed());
-        println!();
-        println!("  {}  {} Configure Alerts", "4".cyan().bold(), "⚙️".to_string());
-        println!("     {}", "Set up alert rules and thresholds".dimmed());
-        println!();
-        println!("  {}  ← Back to Main Menu", "b".cyan().bold());
-        println!();
-
-        let choice = self.read_char(&format!("  {} ", "Select option:".bold()));
-        
-        match choice {
-            '1' => DefensiveMenuOption::StartMonitor,
-            '2' => DefensiveMenuOption::StopMonitor,
-            '3' => DefensiveMenuOption::ViewAlerts,
-            '4' => DefensiveMenuOption::ConfigureAlerts,
-            'b' | 'B' | 'q' | 'Q' => DefensiveMenuOption::Back,
+        let options = [
+            "▶ Start Monitoring — Begin attack surface monitoring",
+            "⏹ Stop Monitoring — Stop active monitors",
+            "🔔 View Alerts — Review recent alerts and changes",
+            "⚙️ Configure Alerts — Set up alert rules and thresholds",
+            "↩ Back to Main Menu",
+        ];
+        match self.select_index("Select option", &options, 0) {
+            0 => DefensiveMenuOption::StartMonitor,
+            1 => DefensiveMenuOption::StopMonitor,
+            2 => DefensiveMenuOption::ViewAlerts,
+            3 => DefensiveMenuOption::ConfigureAlerts,
             _ => DefensiveMenuOption::Back,
         }
     }
@@ -288,43 +271,24 @@ impl Menu {
     pub fn scope_menu(&self) -> ScopeMenuOption {
         self.print_banner();
         self.print_header("Manage Scopes 📋");
-        
-        println!();
-        println!("  {}  {} Import Scope", "1".cyan().bold(), "📥".to_string());
-        println!("     {}", "Import scope from YAML file".dimmed());
-        println!();
-        println!("  {}  {} Create Scope", "2".cyan().bold(), "➕".to_string());
-        println!("     {}", "Create a new scope manually".dimmed());
-        println!();
-        println!("  {}  {} Add Target to Scope", "3".cyan().bold(), "🎯".to_string());
-        println!("     {}", "Add domain, CIDR, or URL to a scope".dimmed());
-        println!();
-        println!("  {}  {} List Scopes", "4".cyan().bold(), "📃".to_string());
-        println!("     {}", "View all imported scopes".dimmed());
-        println!();
-        println!("  {}  {} View Scope Details", "5".cyan().bold(), "🔎".to_string());
-        println!("     {}", "Inspect a specific scope".dimmed());
-        println!();
-        println!("  {}  {} Validate Target", "6".cyan().bold(), "✓".green());
-        println!("     {}", "Check if a target is in scope".dimmed());
-        println!();
-        println!("  {}  {} Delete Scope", "7".cyan().bold(), "🗑".red());
-        println!("     {}", "Remove a scope from the database".dimmed());
-        println!();
-        println!("  {}  ← Back to Main Menu", "b".cyan().bold());
-        println!();
-
-        let choice = self.read_char(&format!("  {} ", "Select option:".bold()));
-        
-        match choice {
-            '1' => ScopeMenuOption::ImportScope,
-            '2' => ScopeMenuOption::CreateScope,
-            '3' => ScopeMenuOption::AddTarget,
-            '4' => ScopeMenuOption::ListScopes,
-            '5' => ScopeMenuOption::ViewScope,
-            '6' => ScopeMenuOption::ValidateTarget,
-            '7' => ScopeMenuOption::DeleteScope,
-            'b' | 'B' | 'q' | 'Q' => ScopeMenuOption::Back,
+        let options = [
+            "📥 Import Scope — Import scope from YAML file",
+            "➕ Create Scope — Create a new scope manually",
+            "🎯 Add Target to Scope — Add domain, CIDR, or URL to a scope",
+            "📃 List Scopes — View all imported scopes",
+            "🔎 View Scope Details — Inspect a specific scope",
+            "✓ Validate Target — Check if a target is in scope",
+            "🗑 Delete Scope — Remove a scope from the database",
+            "↩ Back to Main Menu",
+        ];
+        match self.select_index("Select option", &options, 0) {
+            0 => ScopeMenuOption::ImportScope,
+            1 => ScopeMenuOption::CreateScope,
+            2 => ScopeMenuOption::AddTarget,
+            3 => ScopeMenuOption::ListScopes,
+            4 => ScopeMenuOption::ViewScope,
+            5 => ScopeMenuOption::ValidateTarget,
+            6 => ScopeMenuOption::DeleteScope,
             _ => ScopeMenuOption::Back,
         }
     }
@@ -406,63 +370,48 @@ impl Menu {
 
     /// Prompt for profile selection
     pub fn prompt_profile(&self) -> String {
-        println!();
-        println!("  {}", "Scan Profiles:".bold());
-        println!();
-        println!("  {}  {} - Passive only, minimal requests", "1".cyan().bold(), "safe".green());
-        println!("  {}  {} - Balanced recon with rate limiting", "2".cyan().bold(), "standard".yellow());
-        println!();
-        
-        let choice = self.read_char(&format!("  {} Select profile [1]: ", "→".cyan()));
-        
-        match choice {
-            '2' => "standard".to_string(),
+        let options = [
+            "safe — Passive only, minimal requests",
+            "standard — Balanced recon with rate limiting",
+        ];
+        match self.select_index("Select profile", &options, 0) {
+            1 => "standard".to_string(),
             _ => "safe".to_string(),
         }
     }
 
     /// Prompt for severity filter
     pub fn prompt_severity(&self) -> Option<String> {
-        println!();
-        println!("  {}", "Filter by Severity:".bold());
-        println!();
-        println!("  {}  {} Critical", "1".cyan().bold(), "🔴".to_string());
-        println!("  {}  {} High", "2".cyan().bold(), "🟠".to_string());
-        println!("  {}  {} Medium", "3".cyan().bold(), "🟡".to_string());
-        println!("  {}  {} Low", "4".cyan().bold(), "🟢".to_string());
-        println!("  {}  {} Info", "5".cyan().bold(), "🔵".to_string());
-        println!("  {}  All", "a".cyan().bold());
-        println!();
-        
-        let choice = self.read_char(&format!("  {} Select severity [a]: ", "→".cyan()));
-        
-        match choice {
-            '1' => Some("critical".to_string()),
-            '2' => Some("high".to_string()),
-            '3' => Some("medium".to_string()),
-            '4' => Some("low".to_string()),
-            '5' => Some("info".to_string()),
+        let options = [
+            "All severities",
+            "Critical",
+            "High",
+            "Medium",
+            "Low",
+            "Info",
+        ];
+        match self.select_index("Filter by severity", &options, 0) {
+            1 => Some("critical".to_string()),
+            2 => Some("high".to_string()),
+            3 => Some("medium".to_string()),
+            4 => Some("low".to_string()),
+            5 => Some("info".to_string()),
             _ => None,
         }
     }
 
     /// Prompt for report format
     pub fn prompt_report_format(&self) -> String {
-        println!();
-        println!("  {}", "Report Formats:".bold());
-        println!();
-        println!("  {}  {} - Machine-readable", "1".cyan().bold(), "JSON".cyan());
-        println!("  {}  {} - Technical analyst report", "2".cyan().bold(), "Markdown".cyan());
-        println!("  {}  {} - Executive summary", "3".cyan().bold(), "HTML".cyan());
-        println!("  {}  {} - Bug bounty submission", "4".cyan().bold(), "Bounty".cyan());
-        println!();
-        
-        let choice = self.read_char(&format!("  {} Select format [1]: ", "→".cyan()));
-        
-        match choice {
-            '2' => "md".to_string(),
-            '3' => "html".to_string(),
-            '4' => "bounty".to_string(),
+        let options = [
+            "JSON — Machine-readable",
+            "Markdown — Technical analyst report",
+            "HTML — Executive summary",
+            "Bounty — Bug bounty submission",
+        ];
+        match self.select_index("Select report format", &options, 0) {
+            1 => "md".to_string(),
+            2 => "html".to_string(),
+            3 => "bounty".to_string(),
             _ => "json".to_string(),
         }
     }
@@ -482,23 +431,18 @@ impl Menu {
 
     /// Prompt for target type
     pub fn prompt_target_type(&self) -> String {
-        println!();
-        println!("  {}", "Target Types:".bold());
-        println!();
-        println!("  {}  {} Domain (e.g., example.com)", "1".cyan().bold(), "🌐".to_string());
-        println!("  {}  {} Wildcard (e.g., *.example.com)", "2".cyan().bold(), "✳️".to_string());
-        println!("  {}  {} CIDR Range (e.g., 192.168.1.0/24)", "3".cyan().bold(), "🔢".to_string());
-        println!("  {}  {} URL (e.g., https://api.example.com)", "4".cyan().bold(), "🔗".to_string());
-        println!("  {}  {} ASN (e.g., AS12345)", "5".cyan().bold(), "🏢".to_string());
-        println!();
-        
-        let choice = self.read_char(&format!("  {} Select type [1]: ", "→".cyan()));
-        
-        match choice {
-            '2' => "wildcard".to_string(),
-            '3' => "cidr".to_string(),
-            '4' => "url".to_string(),
-            '5' => "asn".to_string(),
+        let options = [
+            "🌐 Domain (example.com)",
+            "✳️ Wildcard (*.example.com)",
+            "🔢 CIDR Range (192.168.1.0/24)",
+            "🔗 URL (https://api.example.com)",
+            "🏢 ASN (AS12345)",
+        ];
+        match self.select_index("Select target type", &options, 0) {
+            1 => "wildcard".to_string(),
+            2 => "cidr".to_string(),
+            3 => "url".to_string(),
+            4 => "asn".to_string(),
             _ => "domain".to_string(),
         }
     }
@@ -548,7 +492,13 @@ impl Menu {
     pub fn prompt_number(&self, prompt: &str, default: u32) -> u32 {
         println!();
         let input = self.read_input(&format!("  {} {} [{}]: ", "🔢".to_string(), prompt, default));
-        input.parse().unwrap_or(default)
+        match input.parse::<u32>() {
+            Ok(v) => v,
+            Err(_) => {
+                self.show_warning("Invalid number, using default value");
+                default
+            }
+        }
     }
 
     /// Prompt for string value with default
@@ -566,39 +516,22 @@ impl Menu {
     pub fn settings_menu(&self) -> SettingsMenuOption {
         self.print_banner();
         self.print_header("Settings ⚙️");
-        
-        println!();
-        println!("  {}  {} View Current Settings", "1".cyan().bold(), "👁".to_string());
-        println!("     {}", "Display all configuration values".dimmed());
-        println!();
-        println!("  {}  {} Edit Rate Limit", "2".cyan().bold(), "⏱".to_string());
-        println!("     {}", "Set requests per second".dimmed());
-        println!();
-        println!("  {}  {} Edit Timeout", "3".cyan().bold(), "⌛".to_string());
-        println!("     {}", "Set request timeout".dimmed());
-        println!();
-        println!("  {}  {} Edit User Agent", "4".cyan().bold(), "🤖".to_string());
-        println!("     {}", "Set HTTP user agent string".dimmed());
-        println!();
-        println!("  {}  {} Database Settings", "5".cyan().bold(), "💾".to_string());
-        println!("     {}", "Configure database backend".dimmed());
-        println!();
-        println!("  {}  {} Reset to Defaults", "6".cyan().bold(), "🔄".to_string());
-        println!("     {}", "Restore default configuration".dimmed());
-        println!();
-        println!("  {}  ← Back to Main Menu", "b".cyan().bold());
-        println!();
-
-        let choice = self.read_char(&format!("  {} ", "Select option:".bold()));
-        
-        match choice {
-            '1' => SettingsMenuOption::ViewSettings,
-            '2' => SettingsMenuOption::EditRateLimit,
-            '3' => SettingsMenuOption::EditTimeout,
-            '4' => SettingsMenuOption::EditUserAgent,
-            '5' => SettingsMenuOption::EditDatabase,
-            '6' => SettingsMenuOption::ResetDefaults,
-            'b' | 'B' | 'q' | 'Q' => SettingsMenuOption::Back,
+        let options = [
+            "👁 View Current Settings — Display all configuration values",
+            "⏱ Edit Rate Limit — Set requests per second",
+            "⌛ Edit Timeout — Set request timeout",
+            "🤖 Edit User Agent — Set HTTP user agent string",
+            "💾 Database Settings — Configure database backend",
+            "🔄 Reset to Defaults — Restore default configuration",
+            "↩ Back to Main Menu",
+        ];
+        match self.select_index("Select option", &options, 0) {
+            0 => SettingsMenuOption::ViewSettings,
+            1 => SettingsMenuOption::EditRateLimit,
+            2 => SettingsMenuOption::EditTimeout,
+            3 => SettingsMenuOption::EditUserAgent,
+            4 => SettingsMenuOption::EditDatabase,
+            5 => SettingsMenuOption::ResetDefaults,
             _ => SettingsMenuOption::Back,
         }
     }
@@ -714,7 +647,9 @@ impl Menu {
     /// Display a progress indicator
     pub fn show_progress(&self, message: &str) {
         print!("  {} {}...", "⟳".cyan(), message);
-        io::stdout().flush().unwrap();
+        if let Err(e) = io::stdout().flush() {
+            eprintln!("failed to flush stdout for progress display: {}", e);
+        }
     }
 
     /// Complete progress
@@ -739,8 +674,8 @@ impl Menu {
                 _ => severity.blue().to_string(),
             };
             
-            let short_id = if id.len() > 8 { &id[..8] } else { id };
-            let short_target = if target.len() > 30 { format!("{}...", &target[..27]) } else { target.clone() };
+            let short_id = Self::truncate_chars(id, 8);
+            let short_target = Self::truncate_chars(target, 27);
             
             println!("  {:8} {:12} {:20} {}", short_id.dimmed(), severity_colored, finding_type, short_target);
         }
@@ -1138,7 +1073,7 @@ impl Menu {
                         println!("  {}", self.line().dimmed());
                         
                         for (id, name) in &scopes {
-                            let short_id = if id.len() > 8 { &id[..8] } else { id };
+                            let short_id = Self::truncate_chars(id, 8);
                             println!("  {:8} {:30}", short_id.dimmed(), name);
                         }
                         
@@ -1416,11 +1351,7 @@ impl Menu {
                         println!("  {:10} {:14} {}", "ID".bold(), "TYPE".bold(), "VALUE".bold());
                         println!("  {}", self.line().dimmed());
                         for asset in assets {
-                            let short_id = if asset.id.len() > 10 {
-                                format!("{}...", &asset.id[..7])
-                            } else {
-                                asset.id.clone()
-                            };
+                            let short_id = Self::truncate_chars(&asset.id, 7);
                             println!(
                                 "  {:10} {:14} {}",
                                 short_id.dimmed(),
@@ -1457,7 +1388,17 @@ impl Menu {
                         );
                     } else {
                         self.show_info("Settings not loaded. Using defaults.");
-                        self.display_settings(10, 30, "AegisOSINT/0.1.0", "~/.local/share/aegis-osint/aegis.db", "sqlite");
+                        let default_config = Config::default();
+                        let default_db_path = data_dir()
+                            .map(|p| p.join("aegis.db").to_string_lossy().to_string())
+                            .unwrap_or_else(|_| "~/.local/share/aegis-osint/aegis.db".to_string());
+                        self.display_settings(
+                            DEFAULT_MENU_RPS,
+                            DEFAULT_MENU_TIMEOUT_SECS as u64,
+                            &default_config.user_agent,
+                            &default_db_path,
+                            DEFAULT_MENU_DB_TYPE,
+                        );
                     }
                     
                     self.wait_enter();
@@ -1466,7 +1407,11 @@ impl Menu {
                     self.print_banner();
                     self.print_header("Edit Rate Limit ⏱");
                     
-                    let current = self.config.as_ref().map(|c| c.rate_limit.requests_per_second).unwrap_or(10);
+                    let current = self
+                        .config
+                        .as_ref()
+                        .map(|c| c.rate_limit.requests_per_second)
+                        .unwrap_or(DEFAULT_MENU_RPS);
                     let new_val = self.prompt_number("Requests per second", current);
                     
                     if new_val != current {
@@ -1489,7 +1434,11 @@ impl Menu {
                     self.print_banner();
                     self.print_header("Edit Request Timeout ⌛");
                     
-                    let current = self.config.as_ref().map(|c| c.request_timeout_secs as u32).unwrap_or(30);
+                    let current = self
+                        .config
+                        .as_ref()
+                        .map(|c| c.request_timeout_secs as u32)
+                        .unwrap_or(DEFAULT_MENU_TIMEOUT_SECS);
                     let new_val = self.prompt_number("Timeout in seconds", current);
                     
                     if new_val != current {
@@ -1512,7 +1461,11 @@ impl Menu {
                     self.print_banner();
                     self.print_header("Edit User Agent 🤖");
                     
-                    let current = self.config.as_ref().map(|c| c.user_agent.clone()).unwrap_or_else(|| "AegisOSINT/0.1.0".to_string());
+                    let current = self
+                        .config
+                        .as_ref()
+                        .map(|c| c.user_agent.clone())
+                        .unwrap_or_else(|| Config::default().user_agent);
                     let new_val = self.prompt_string("User agent string", &current);
                     
                     if new_val != current {
@@ -1534,18 +1487,12 @@ impl Menu {
                 SettingsMenuOption::EditDatabase => {
                     self.print_banner();
                     self.print_header("Database Settings 💾");
-                    
-                    println!();
-                    println!("  {}", "Database Backend:".bold());
-                    println!();
-                    println!("  {}  {} SQLite (local file)", "1".cyan().bold(), "📁".to_string());
-                    println!("  {}  {} PostgreSQL (remote server)", "2".cyan().bold(), "🐘".to_string());
-                    println!();
-                    
-                    let choice = self.read_char(&format!("  {} Select backend [1]: ", "→".cyan()));
-                    
-                    match choice {
-                        '2' => {
+                    let backend_options = [
+                        "SQLite (local file)",
+                        "PostgreSQL (remote server)",
+                    ];
+                    match self.select_index("Select database backend", &backend_options, 0) {
+                        1 => {
                             println!();
                             let conn_str = self.read_input("  PostgreSQL connection string: ");
                             if !conn_str.is_empty() {
@@ -1569,7 +1516,11 @@ impl Menu {
                                 .config
                                 .as_ref()
                                 .map(|c| c.database.connection.clone())
-                                .unwrap_or_else(|| "~/.local/share/aegis-osint/aegis.db".to_string());
+                                .unwrap_or_else(|| {
+                                    data_dir()
+                                        .map(|p| p.join("aegis.db").to_string_lossy().to_string())
+                                        .unwrap_or_else(|_| "~/.local/share/aegis-osint/aegis.db".to_string())
+                                });
                             let sqlite_path = self.prompt_string(
                                 "SQLite database file path",
                                 &default_sqlite,

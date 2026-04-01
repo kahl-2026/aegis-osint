@@ -69,19 +69,19 @@ async fn run(cli: Cli) -> Result<u8> {
     }
 
     // If no command given, or explicit menu command, launch interactive menu
-    match cli.command {
+    let command = match cli.command {
         None | Some(Commands::Menu) => {
             return run_interactive_menu().await;
         }
-        _ => {}
-    }
+        Some(command) => command,
+    };
 
     // Initialize core components
     let storage = Storage::initialize(&config).await?;
     let policy_engine = PolicyEngine::new(&config, &storage).await?;
 
     // Dispatch to command handlers
-    match cli.command.unwrap() {
+    match command {
         Commands::Scope(cmd) => cmd.execute(&storage, &policy_engine).await,
         Commands::Offensive(cmd) => cmd.execute(&storage, &policy_engine).await,
         Commands::Defensive(cmd) => cmd.execute(&storage, &policy_engine).await,

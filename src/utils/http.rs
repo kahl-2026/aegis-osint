@@ -44,6 +44,10 @@ impl HttpClient {
 
 impl Default for HttpClient {
     fn default() -> Self {
-        Self::new("AegisOSINT/0.1.0", 30).expect("Failed to create HTTP client")
+        let user_agent = format!("AegisOSINT/{}", env!("CARGO_PKG_VERSION"));
+        Self::new(&user_agent, 30).unwrap_or_else(|_| Self {
+            inner: reqwest::Client::new(),
+            user_agent,
+        })
     }
 }

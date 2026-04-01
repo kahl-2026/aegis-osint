@@ -230,8 +230,16 @@ impl ScopeEngine {
 
     /// Check if an ID is valid (alphanumeric with hyphens)
     fn is_valid_id(id: &str) -> bool {
-        let re = Regex::new(r"^[a-zA-Z][a-zA-Z0-9\-_]*$").unwrap();
-        re.is_match(id)
+        let mut chars = id.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+
+        if !first.is_ascii_alphabetic() {
+            return false;
+        }
+
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     }
 
     /// Check if a domain or wildcard pattern is valid
@@ -241,11 +249,27 @@ impl ScopeEngine {
         }
 
         // Allow wildcard prefix
-        let check_domain = domain.strip_prefix("*.").unwrap_or(domain);
+        let check_domain = domain.strip_prefix("*.").unwrap_or(domain).trim();
+        if check_domain.is_empty() || check_domain.len() > 253 {
+            return false;
+        }
 
-        // Basic domain validation
-        let re = Regex::new(r"^[a-zA-Z0-9]([a-zA-Z0-9\-\.]*[a-zA-Z0-9])?$").unwrap();
-        re.is_match(check_domain)
+        for label in check_domain.split('.') {
+            if label.is_empty() || label.len() > 63 {
+                return false;
+            }
+            if label.starts_with('-') || label.ends_with('-') {
+                return false;
+            }
+            if !label
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-')
+            {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// Check if a CIDR is valid
