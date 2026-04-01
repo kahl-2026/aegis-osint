@@ -136,29 +136,59 @@ impl BrandMonitor {
         let lower_domain = domain.to_lowercase();
 
         // Check for brand name presence
-        let contains_brand = lower_domain.contains(&self.brand_name.to_lowercase());
+        let contains_brand = self.domain_contains_brand(&lower_domain);
 
         // Check similarity
         let similarity = self.calculate_similarity(&lower_domain);
 
         // Check for common impersonation patterns
         let patterns = self.check_impersonation_patterns(&lower_domain);
+        let has_keyword_lure = lower_domain.contains("login")
+            || lower_domain.contains("account")
+            || lower_domain.contains("secure")
+            || lower_domain.contains("support")
+            || lower_domain.contains("help");
+        let brand_like = similarity >= 0.75;
+        let known_domain = self.is_known(domain);
 
         DomainAnalysis {
             domain: domain.to_string(),
-            contains_brand,
+            contains_brand: contains_brand || similarity >= 0.8,
             similarity_score: similarity,
             impersonation_patterns: patterns,
-            is_suspicious: contains_brand && !self.is_known(domain) && similarity > 0.6,
+            is_suspicious: !known_domain
+                && ((contains_brand && similarity > 0.6)
+                    || (brand_like && has_keyword_lure)
+                    || similarity >= 0.9),
         }
     }
 
     fn calculate_similarity(&self, domain: &str) -> f64 {
-        // Simple Levenshtein-based similarity
-        let brand = &self.brand_name.to_lowercase();
-        let max_len = std::cmp::max(brand.len(), domain.len()) as f64;
-        let distance = levenshtein_distance(brand, domain) as f64;
-        1.0 - (distance / max_len)
+        let brand = normalize_token(&self.brand_name.to_lowercase());
+        let mut best = 0.0;
+
+        for candidate in similarity_candidates(domain) {
+            let normalized = normalize_token(&candidate);
+            if normalized.is_empty() || brand.is_empty() {
+                continue;
+            }
+            let max_len = std::cmp::max(brand.len(), normalized.len()) as f64;
+            let distance = levenshtein_distance(&brand, &normalized) as f64;
+            let score = 1.0 - (distance / max_len);
+            if score > best {
+                best = score;
+            }
+        }
+
+        best
+    }
+
+    fn domain_contains_brand(&self, domain: &str) -> bool {
+        let brand = normalize_token(&self.brand_name.to_lowercase());
+        similarity_candidates(domain)
+            .into_iter()
+            .map(|candidate| normalize_token(&candidate))
+            .any(|candidate| !candidate.is_empty() && candidate.contains(&brand))
     }
 
     fn check_impersonation_patterns(&self, domain: &str) -> Vec<String> {
@@ -211,6 +241,46 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
     }
 
     dp[m][n]
+}
+
+fn similarity_candidates(domain: &str) -> Vec<String> {
+    let host = domain
+        .split('/')
+        .next()
+        .unwrap_or(domain)
+        .trim_end_matches('.')
+        .to_lowercase();
+    let mut candidates = vec![host.clone()];
+
+    for label in host.split('.') {
+        if !label.is_empty() {
+            candidates.push(label.to_string());
+            for token in label.split(|c: char| !c.is_ascii_alphanumeric()) {
+                if !token.is_empty() {
+                    candidates.push(token.to_string());
+                }
+            }
+        }
+    }
+
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn normalize_token(token: &str) -> String {
+    token
+        .chars()
+        .map(|c| match c {
+            '0' => 'o',
+            '1' => 'l',
+            '3' => 'e',
+            '5' => 's',
+            '7' => 't',
+            _ => c,
+        })
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect()
 }
 
 /// Typosquat domain variation
