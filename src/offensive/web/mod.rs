@@ -59,8 +59,11 @@ impl WebReconEngine {
             technologies: vec![],
         };
 
-        match self.client.head(url).send().await {
-            Ok(response) => {
+        let mut last_error: Option<(String, reqwest::Error)> = None;
+        for candidate_url in self.candidate_urls(url) {
+            match self.client.head(&candidate_url).send().await {
+                Ok(response) => {
+                    result.url = candidate_url.clone();
                 // Collect all headers
                 for (name, value) in response.headers().iter() {
                     if let Ok(v) = value.to_str() {
@@ -124,11 +127,17 @@ impl WebReconEngine {
                 }
 
                 // Generate findings for issues
-                self.generate_header_findings(url, &result).await?;
+                    self.generate_header_findings(&candidate_url, &result).await?;
+                    return Ok(result);
+                }
+                Err(e) => {
+                    last_error = Some((candidate_url, e));
+                }
             }
-            Err(e) => {
-                tracing::warn!("Header analysis failed for {}: {}", url, e);
-            }
+        }
+
+        if let Some((failed_url, e)) = last_error {
+            tracing::warn!("Header analysis failed for {}: {}", failed_url, e);
         }
 
         Ok(result)
@@ -149,12 +158,13 @@ impl WebReconEngine {
 
         let mut endpoints = Vec::new();
 
-        // Fetch the page
-        match self.client.get(url).send().await {
-            Ok(response) => {
+        let mut last_error: Option<(String, reqwest::Error)> = None;
+        for candidate_url in self.candidate_urls(url) {
+            match self.client.get(&candidate_url).send().await {
+                Ok(response) => {
                 if let Ok(body) = response.text().await {
                     // Find script tags and extract URLs
-                    let script_urls = self.extract_script_urls(&body, url);
+                        let script_urls = self.extract_script_urls(&body, &candidate_url);
 
                     for script_url in script_urls {
                         if let Ok(parsed) = url::Url::parse(&script_url) {
@@ -164,7 +174,8 @@ impl WebReconEngine {
 
                                 if let Ok(js_response) = self.client.get(&script_url).send().await {
                                     if let Ok(js_content) = js_response.text().await {
-                                        let found = self.extract_endpoints_from_js(&js_content, url);
+                                            let found =
+                                                self.extract_endpoints_from_js(&js_content, &candidate_url);
                                         endpoints.extend(found);
                                     }
                                 }
@@ -173,12 +184,20 @@ impl WebReconEngine {
                     }
 
                     // Also extract endpoints from inline scripts
-                    let inline_endpoints = self.extract_endpoints_from_js(&body, url);
+                        let inline_endpoints = self.extract_endpoints_from_js(&body, &candidate_url);
                     endpoints.extend(inline_endpoints);
                 }
+                    break;
+                }
+                Err(e) => {
+                    last_error = Some((candidate_url, e));
+                }
             }
-            Err(e) => {
-                tracing::warn!("JS endpoint discovery failed for {}: {}", url, e);
+        }
+
+        if endpoints.is_empty() {
+            if let Some((failed_url, e)) = last_error {
+                tracing::warn!("JS endpoint discovery failed for {}: {}", failed_url, e);
             }
         }
 
@@ -214,29 +233,57 @@ impl WebReconEngine {
             ("/crossdomain.xml", "Flash crossdomain.xml present"),
         ];
 
-        for (path, description) in paths_to_check {
-            self.policy.wait_for_rate_limit().await;
+        let mut seen = std::collections::HashSet::new();
+        let mut had_response = false;
+        let mut last_error: Option<(String, reqwest::Error)> = None;
 
-            let check_url = format!("{}{}", url.trim_end_matches('/'), path);
+        for base_url in self.candidate_urls(url) {
+            for (path, description) in paths_to_check {
+                self.policy.wait_for_rate_limit().await;
 
-            match self.client.head(&check_url).send().await {
-                Ok(response) => {
-                    if response.status().is_success() {
-                        let severity = self.classify_misconfig_severity(path);
+                let check_url = format!("{}{}", base_url.trim_end_matches('/'), path);
 
-                        findings.push(MisconfigFinding {
-                            url: check_url,
-                            description: description.to_string(),
-                            severity,
-                            evidence: format!("HTTP {}", response.status()),
-                        });
+                match self.client.head(&check_url).send().await {
+                    Ok(response) => {
+                        had_response = true;
+                        if response.status().is_success() && seen.insert(check_url.clone()) {
+                            let severity = self.classify_misconfig_severity(path);
+
+                            findings.push(MisconfigFinding {
+                                url: check_url,
+                                description: description.to_string(),
+                                severity,
+                                evidence: format!("HTTP {}", response.status()),
+                            });
+                        }
+                    }
+                    Err(e) => {
+                        last_error = Some((check_url, e));
                     }
                 }
-                Err(_) => {}
+            }
+        }
+
+        if !had_response {
+            if let Some((failed_url, e)) = last_error {
+                tracing::warn!("Misconfiguration checks failed for {}: {}", failed_url, e);
             }
         }
 
         Ok(findings)
+    }
+
+    fn candidate_urls(&self, url: &str) -> Vec<String> {
+        let mut candidates = vec![url.to_string()];
+        if let Ok(mut parsed) = url::Url::parse(url) {
+            if parsed.scheme() == "https" && parsed.set_scheme("http").is_ok() {
+                let fallback = parsed.to_string();
+                if !candidates.contains(&fallback) {
+                    candidates.push(fallback);
+                }
+            }
+        }
+        candidates
     }
 
     fn extract_script_urls(&self, html: &str, base_url: &str) -> Vec<String> {
