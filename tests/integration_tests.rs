@@ -1,5 +1,4 @@
 use aegis_osint::scope::{Scope, ScopeItem, ScopeItemType};
-use aegis_osint::policy::PolicyEngine;
 
 #[cfg(test)]
 mod scope_tests {
@@ -60,9 +59,9 @@ mod scope_tests {
         let scope = create_test_scope();
         
         // Any subdomain of example.com should be in scope
-        assert!(scope.is_in_scope("test.example.com"));
-        assert!(scope.is_in_scope("sub.test.example.com"));
-        assert!(scope.is_in_scope("www.example.com"));
+        assert!(scope.is_in_scope("test.example.com").in_scope);
+        assert!(scope.is_in_scope("sub.test.example.com").in_scope);
+        assert!(scope.is_in_scope("www.example.com").in_scope);
     }
 
     #[test]
@@ -70,7 +69,7 @@ mod scope_tests {
         let scope = create_test_scope();
         
         // admin.example.com is explicitly excluded (priority 100 > 10)
-        assert!(!scope.is_in_scope("admin.example.com"));
+        assert!(!scope.is_in_scope("admin.example.com").in_scope);
     }
 
     #[test]
@@ -78,8 +77,8 @@ mod scope_tests {
         let scope = create_test_scope();
         
         // Domains not matching any scope item are out of scope
-        assert!(!scope.is_in_scope("notexample.com"));
-        assert!(!scope.is_in_scope("example.org"));
+        assert!(!scope.is_in_scope("notexample.com").in_scope);
+        assert!(!scope.is_in_scope("example.org").in_scope);
     }
 
     #[test]
@@ -87,12 +86,12 @@ mod scope_tests {
         let scope = create_test_scope();
         
         // IPs in the CIDR range should be in scope
-        assert!(scope.is_in_scope("203.0.113.1"));
-        assert!(scope.is_in_scope("203.0.113.254"));
+        assert!(scope.is_in_scope("203.0.113.1").in_scope);
+        assert!(scope.is_in_scope("203.0.113.254").in_scope);
         
         // IPs outside the range should be out of scope
-        assert!(!scope.is_in_scope("203.0.114.1"));
-        assert!(!scope.is_in_scope("192.168.1.1"));
+        assert!(!scope.is_in_scope("203.0.114.1").in_scope);
+        assert!(!scope.is_in_scope("192.168.1.1").in_scope);
     }
 
     #[test]
@@ -100,37 +99,52 @@ mod scope_tests {
         let scope = create_test_scope();
         
         // These should always be blocked regardless of scope
-        assert!(!scope.is_in_scope("localhost"));
-        assert!(!scope.is_in_scope("127.0.0.1"));
-        assert!(!scope.is_in_scope("example.gov"));
-        assert!(!scope.is_in_scope("example.mil"));
+        assert!(!scope.is_in_scope("localhost").in_scope);
+        assert!(!scope.is_in_scope("127.0.0.1").in_scope);
+        assert!(!scope.is_in_scope("example.gov").in_scope);
+        assert!(!scope.is_in_scope("example.mil").in_scope);
     }
 }
 
 #[cfg(test)]
 mod policy_tests {
+    use aegis_osint::config::Config;
     use aegis_osint::policy::PolicyEngine;
+    use aegis_osint::storage::Storage;
+
+    async fn create_test_engine() -> PolicyEngine {
+        let mut config = Config::default();
+        let test_db = std::env::temp_dir().join(format!(
+            "aegis-policy-test-{}.db",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        config.database.db_type = "sqlite".to_string();
+        config.database.connection = test_db.to_string_lossy().to_string();
+
+        let storage = Storage::initialize(&config)
+            .await
+            .expect("failed to initialize test storage");
+        PolicyEngine::new(&config, &storage)
+            .await
+            .expect("failed to initialize policy engine")
+    }
 
     #[tokio::test]
     async fn test_policy_engine_creation() {
-        let engine = PolicyEngine::new();
-        assert!(!engine.is_killed());
+        let engine = create_test_engine().await;
+        assert!(engine.is_enabled().await);
     }
 
     #[tokio::test]
     async fn test_kill_switch() {
-        let engine = PolicyEngine::new();
+        let engine = create_test_engine().await;
         
         // Initially not killed
-        assert!(!engine.is_killed());
+        assert!(engine.is_enabled().await);
         
         // Activate kill switch
-        engine.activate_kill_switch("Test activation");
-        assert!(engine.is_killed());
-        
-        // Deactivate
-        engine.deactivate_kill_switch();
-        assert!(!engine.is_killed());
+        engine.activate_kill_switch().await;
+        assert!(!engine.is_enabled().await);
     }
 }
 

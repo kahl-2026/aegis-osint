@@ -34,8 +34,8 @@ mod offensive_tests {
         let scope = create_test_scope();
         
         // Verify scope is properly configured
-        assert!(scope.is_in_scope("test.example.com"));
-        assert!(!scope.is_in_scope("test.notexample.com"));
-        assert!(!scope.is_in_scope("example.gov"));
+        assert!(scope.is_in_scope("test.example.com").in_scope);
+        assert!(!scope.is_in_scope("test.notexample.com").in_scope);
+        assert!(!scope.is_in_scope("example.gov").in_scope);
     }
 }
