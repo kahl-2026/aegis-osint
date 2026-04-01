@@ -1,6 +1,6 @@
 # AegisOSINT
 
-**Production-grade CLI platform for authorized bug bounty workflows and defensive OSINT operations.**
+**Educational CLI platform for authorized bug bounty workflows and defensive OSINT operations.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
