@@ -1,12 +1,12 @@
 //! Interactive menu system for AegisOSINT
 
 use crate::config::{data_dir, Config};
-use crate::defensive::DefensiveScanner;
+use crate::defensive::{DefensiveOrchestrator, DefensiveScanner};
 use crate::offensive::OffensiveOrchestrator;
 use crate::policy::PolicyEngine;
 use crate::scope::{Scope, ScopeDefinition, ScopeEngine, ScopeItem, ScopeItemType};
 use crate::reporting::ReportGenerator;
-use crate::storage::Storage;
+use crate::storage::{MonitorInfo, ScanRunInfo, Storage};
 use crate::utils::validation::{validate_asn, validate_cidr, validate_domain, validate_url};
 use anyhow::Result;
 use chrono::Utc;
@@ -342,30 +342,24 @@ impl Menu {
             return None;
         }
 
-        println!();
-        println!("  {}", "Available Scopes:".bold());
-        println!();
-        
-        for (i, (id, name)) in scopes.iter().enumerate() {
-            println!("  {}  {} ({})", format!("{}", i + 1).cyan().bold(), name, id.dimmed());
+        let mut options: Vec<String> = scopes
+            .iter()
+            .map(|(id, name)| format!("{} ({})", name, id))
+            .collect();
+        options.push("↩ Cancel".to_string());
+
+        let choice = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt("Select scope")
+            .items(&options)
+            .default(0)
+            .interact_opt()
+            .ok()
+            .flatten();
+
+        match choice {
+            Some(idx) if idx < scopes.len() => Some(scopes[idx].0.clone()),
+            _ => None,
         }
-        
-        println!();
-        let input = self.read_input(&format!("  {} Select scope (number or ID): ", "→".cyan()));
-        
-        // Try as number first
-        if let Ok(num) = input.parse::<usize>() {
-            if num > 0 && num <= scopes.len() {
-                return Some(scopes[num - 1].0.clone());
-            }
-        }
-        
-        // Try as ID
-        if scopes.iter().any(|(id, _)| id == &input) {
-            return Some(input);
-        }
-        
-        None
     }
 
     /// Prompt for profile selection
@@ -662,7 +656,7 @@ impl Menu {
         println!();
         println!("  {}", "Findings:".bold());
         println!("  {}", self.line().dimmed());
-        println!("  {:8} {:12} {:20} {}", "ID".bold(), "SEVERITY".bold(), "TYPE".bold(), "TARGET".bold());
+        println!("  {:8} {:12} {:34} {}", "ID".bold(), "SEVERITY".bold(), "TITLE".bold(), "ASSET".bold());
         println!("  {}", self.line().dimmed());
         
         for (id, severity, finding_type, target) in findings {
@@ -675,12 +669,124 @@ impl Menu {
             };
             
             let short_id = Self::truncate_chars(id, 8);
-            let short_target = Self::truncate_chars(target, 27);
+            let short_title = Self::truncate_chars(finding_type, 34);
+            let short_target = Self::truncate_chars(target, 22);
             
-            println!("  {:8} {:12} {:20} {}", short_id.dimmed(), severity_colored, finding_type, short_target);
+            println!("  {:8} {:12} {:34} {}", short_id.dimmed(), severity_colored, short_title, short_target);
         }
         
         println!("  {}", self.line().dimmed());
+        println!();
+    }
+
+    fn severity_rank(severity: &str) -> usize {
+        match severity {
+            "critical" => 5,
+            "high" => 4,
+            "medium" => 3,
+            "low" => 2,
+            "info" => 1,
+            _ => 0,
+        }
+    }
+
+    fn severity_meets_threshold(severity: &str, threshold: &str) -> bool {
+        Self::severity_rank(severity) >= Self::severity_rank(threshold)
+    }
+
+    fn show_scan_runs_table(&self, title: &str, runs: &[ScanRunInfo]) {
+        self.print_banner();
+        self.print_header(title);
+        println!();
+        println!(
+            "  {:10} {:10} {:10} {:10} {}",
+            "RUN ID".bold(),
+            "STATUS".bold(),
+            "PROGRESS".bold(),
+            "FINDINGS".bold(),
+            "SCOPE".bold()
+        );
+        println!("  {}", self.line().dimmed());
+        for run in runs {
+            let status = match run.status.as_str() {
+                "running" => run.status.cyan().to_string(),
+                "completed" => run.status.green().to_string(),
+                "failed" => run.status.red().to_string(),
+                "stopped" => run.status.yellow().to_string(),
+                _ => run.status.normal().to_string(),
+            };
+            println!(
+                "  {:10} {:10} {:10} {:10} {}",
+                Self::truncate_chars(&run.id, 10).dimmed(),
+                status,
+                format!("{}%", run.progress),
+                run.findings_count,
+                Self::truncate_chars(&run.scope_id, 22)
+            );
+        }
+        println!();
+    }
+
+    fn prompt_scan_run(&self, prompt: &str, runs: &[ScanRunInfo]) -> Option<String> {
+        if runs.is_empty() {
+            return None;
+        }
+        let mut options: Vec<String> = runs
+            .iter()
+            .map(|run| {
+                format!(
+                    "{} | {} | {}% | {} findings",
+                    Self::truncate_chars(&run.id, 12),
+                    run.status,
+                    run.progress,
+                    run.findings_count
+                )
+            })
+            .collect();
+        options.push("↩ Cancel".to_string());
+
+        let choice = Select::with_theme(&ColorfulTheme::default())
+            .with_prompt(prompt)
+            .items(&options)
+            .default(0)
+            .interact_opt()
+            .ok()
+            .flatten();
+
+        match choice {
+            Some(idx) if idx < runs.len() => Some(runs[idx].id.clone()),
+            _ => None,
+        }
+    }
+
+    fn show_monitors_table(&self, title: &str, monitors: &[MonitorInfo]) {
+        self.print_banner();
+        self.print_header(title);
+        println!();
+        println!(
+            "  {:10} {:22} {:10} {:14} {}",
+            "MONITOR".bold(),
+            "SCOPE".bold(),
+            "STATUS".bold(),
+            "LAST CHECK".bold(),
+            "NEXT CHECK".bold()
+        );
+        println!("  {}", self.line().dimmed());
+        for monitor in monitors {
+            let status = match monitor.status.as_str() {
+                "running" => monitor.status.green().to_string(),
+                "stopped" => monitor.status.yellow().to_string(),
+                _ => monitor.status.normal().to_string(),
+            };
+            println!(
+                "  {:10} {:22} {:10} {:14} {}",
+                Self::truncate_chars(&monitor.id, 10).dimmed(),
+                Self::truncate_chars(&monitor.scope_id, 22),
+                status,
+                Self::truncate_chars(&monitor.last_check, 14),
+                Self::truncate_chars(&monitor.next_check, 18)
+            );
+        }
         println!();
     }
 
@@ -765,6 +871,7 @@ impl Menu {
                                         self.show_progress("Creating scan run");
                                         let run_id =
                                             storage.create_scan_run(&program_name, &scope.id, "offensive").await?;
+                                        storage.update_scan_progress(&run_id, 5).await?;
                                         self.complete_progress();
                                         self.show_info(&format!("Scan ID: {}", run_id));
 
@@ -777,8 +884,17 @@ impl Menu {
                                         );
 
                                         let mut last_reported = 0u8;
+                                        let storage_for_progress = storage.clone();
+                                        let run_for_progress = run_id.clone();
                                         let result = orchestrator
                                             .execute(&run_id, |stage, percent| {
+                                                let progress_storage = storage_for_progress.clone();
+                                                let progress_run = run_for_progress.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = progress_storage
+                                                        .update_scan_progress(&progress_run, percent as i32)
+                                                        .await;
+                                                });
                                                 if percent >= last_reported.saturating_add(10) || percent == 100 {
                                                     println!("  {} [{}%] {}", "→".cyan(), percent, stage);
                                                     last_reported = percent;
@@ -788,11 +904,77 @@ impl Menu {
 
                                         match result {
                                             Ok(summary) => {
+                                                let _ = storage
+                                                    .update_scan_progress(&run_id, 100)
+                                                    .await;
+                                                let _ = storage
+                                                    .update_scan_findings_count(&run_id, summary.findings_count as i32)
+                                                    .await;
                                                 self.show_success("Scan completed");
                                                 println!();
                                                 println!("  {} {}", "Assets discovered:".bold(), summary.assets_count);
                                                 println!("  {} {}", "Findings:".bold(), summary.findings_count);
                                                 println!("  {} {:.1}s", "Duration:".bold(), summary.duration_secs);
+
+                                                match storage
+                                                    .list_findings(
+                                                        None,
+                                                        Some(&scope_id),
+                                                        Some(&run_id),
+                                                        None,
+                                                        None,
+                                                        100,
+                                                        "severity",
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(findings) if !findings.is_empty() => {
+                                                        let rows: Vec<(String, String, String, String)> = findings
+                                                            .iter()
+                                                            .map(|f| {
+                                                                (
+                                                                    f.id.clone(),
+                                                                    f.severity.clone(),
+                                                                    f.title.clone(),
+                                                                    f.asset.clone(),
+                                                                )
+                                                            })
+                                                            .collect();
+                                                        self.show_findings_table(&rows);
+
+                                                        let mut critical = 0usize;
+                                                        let mut high = 0usize;
+                                                        let mut medium = 0usize;
+                                                        let mut low = 0usize;
+                                                        let mut info = 0usize;
+                                                        for finding in &findings {
+                                                            match finding.severity.as_str() {
+                                                                "critical" => critical += 1,
+                                                                "high" => high += 1,
+                                                                "medium" => medium += 1,
+                                                                "low" => low += 1,
+                                                                _ => info += 1,
+                                                            }
+                                                        }
+                                                        println!("  {}", "Findings by severity:".bold());
+                                                        println!(
+                                                            "    critical={} high={} medium={} low={} info={}",
+                                                            critical.to_string().red().bold(),
+                                                            high.to_string().red(),
+                                                            medium.to_string().yellow(),
+                                                            low.to_string().green(),
+                                                            info
+                                                        );
+                                                        println!();
+                                                    }
+                                                    Ok(_) => {
+                                                        self.show_info("No findings were generated for this run");
+                                                    }
+                                                    Err(e) => self.show_error(&format!(
+                                                        "Scan finished but findings could not be loaded: {}",
+                                                        e
+                                                    )),
+                                                }
                                             }
                                             Err(e) => self.show_error(&format!("Scan failed: {}", e)),
                                         }
@@ -809,15 +991,100 @@ impl Menu {
                     self.wait_enter();
                 }
                 OffensiveMenuOption::ViewStatus => {
-                    self.show_info("No active scans");
+                    if let Some(ref storage) = self.storage {
+                        let running = storage.list_scan_runs(Some("running"), 50).await?;
+                        if running.is_empty() {
+                            self.show_info("No active scans");
+                        } else {
+                            self.show_scan_runs_table("Running Scans 📡", &running);
+                            if let Some(run_id) = self.prompt_scan_run("Inspect scan details", &running) {
+                                match storage.get_scan_run(&run_id).await? {
+                                    Some(run) => {
+                                        println!("  {}", "Scan Details".bold());
+                                        println!("  {}", self.line().dimmed());
+                                        println!("  {} {}", "Run ID:".bold(), run.id);
+                                        println!("  {} {}", "Program:".bold(), run.program);
+                                        println!("  {} {}", "Scope:".bold(), run.scope_id);
+                                        println!("  {} {}", "Status:".bold(), run.status);
+                                        println!("  {} {}%", "Progress:".bold(), run.progress);
+                                        println!("  {} {}", "Findings:".bold(), run.findings_count);
+                                        println!("  {} {}", "Started:".bold(), run.started_at);
+                                        println!();
+                                    }
+                                    None => self.show_warning("Scan no longer exists"),
+                                }
+                            }
+                        }
+                    } else {
+                        self.show_error("Storage not initialized");
+                    }
                     self.wait_enter();
                 }
                 OffensiveMenuOption::StopScan => {
-                    self.show_info("No scans to stop");
+                    if let Some(ref storage) = self.storage {
+                        let running = storage.list_scan_runs(Some("running"), 50).await?;
+                        if running.is_empty() {
+                            self.show_info("No running scans to stop");
+                        } else {
+                            self.show_scan_runs_table("Stop Scan ⏹", &running);
+                            if let Some(run_id) = self.prompt_scan_run("Select scan to stop", &running) {
+                                if self.confirm(&format!("Stop scan {}?", run_id)) {
+                                    storage.update_scan_status(&run_id, "stopped").await?;
+                                    storage.update_scan_progress(&run_id, 100).await?;
+                                    self.show_success(&format!("Scan {} stopped", run_id));
+                                }
+                            }
+                        }
+                    } else {
+                        self.show_error("Storage not initialized");
+                    }
                     self.wait_enter();
                 }
                 OffensiveMenuOption::ViewResults => {
-                    self.show_info("No results yet");
+                    if let Some(ref storage) = self.storage {
+                        let mut scans = storage.list_scan_runs(None, 100).await?;
+                        scans.retain(|run| run.status != "running");
+                        if scans.is_empty() {
+                            self.show_info("No completed scans found");
+                        } else {
+                            self.show_scan_runs_table("Scan Results 📋", &scans);
+                            if let Some(run_id) = self.prompt_scan_run("Select run to view findings", &scans) {
+                                if let Some(run) = storage.get_scan_run(&run_id).await? {
+                                    let findings = storage
+                                        .list_findings(
+                                            None,
+                                            Some(&run.scope_id),
+                                            Some(&run.id),
+                                            None,
+                                            None,
+                                            100,
+                                            "severity",
+                                        )
+                                        .await?;
+                                    if findings.is_empty() {
+                                        self.show_info("No findings recorded for this run");
+                                    } else {
+                                        let rows: Vec<(String, String, String, String)> = findings
+                                            .iter()
+                                            .map(|f| {
+                                                (
+                                                    f.id.clone(),
+                                                    f.severity.clone(),
+                                                    f.title.clone(),
+                                                    f.asset.clone(),
+                                                )
+                                            })
+                                            .collect();
+                                        self.show_findings_table(&rows);
+                                    }
+                                } else {
+                                    self.show_warning("Selected run not found");
+                                }
+                            }
+                        }
+                    } else {
+                        self.show_error("Storage not initialized");
+                    }
                     self.wait_enter();
                 }
                 OffensiveMenuOption::Back => break,
@@ -830,12 +1097,17 @@ impl Menu {
         loop {
             match self.defensive_menu() {
                 DefensiveMenuOption::StartMonitor => {
-                    self.show_info("Starting defensive scan...");
+                    self.show_info("Starting defensive workflow...");
                     
                     let scopes = self.get_scope_list().await;
                     
                     if let Some(scope_id) = self.prompt_scope(&scopes) {
-                        if self.confirm("Run defensive checks now?") {
+                        let mode_options = [
+                            "One-time defensive scan",
+                            "Start continuous monitor daemon",
+                        ];
+                        let mode = self.select_index("Select operation mode", &mode_options, 0);
+                        if self.confirm("Proceed with selected defensive operation?") {
                             if let (Some(storage), Some(config)) =
                                 (self.storage.clone(), self.config.clone())
                             {
@@ -852,19 +1124,34 @@ impl Menu {
                                             continue;
                                         }
 
-                                        let scanner =
-                                            DefensiveScanner::new(scope, policy, storage.clone());
-                                        let result = scanner.scan(None).await?;
+                                        if mode == 0 {
+                                            let scanner =
+                                                DefensiveScanner::new(scope, policy, storage.clone());
+                                            let result = scanner.scan(None).await?;
 
-                                        self.show_success("Defensive scan completed");
-                                        println!();
-                                        println!("  {} {}", "Assets checked:".bold(), result.assets_count);
-                                        println!("  {} {}", "Changes detected:".bold(), result.changes_count);
-                                        println!("  {} {}", "Exposures detected:".bold(), result.exposures_count);
-                                        println!("  {} {:.1}s", "Duration:".bold(), result.duration_secs);
-                                        self.show_warning(
-                                            "Continuous daemon monitoring is not yet wired in the interactive menu. Use 'aegis defensive monitor --scope <id>' for continuous mode.",
-                                        );
+                                            self.show_success("Defensive scan completed");
+                                            println!();
+                                            println!("  {} {}", "Assets checked:".bold(), result.assets_count);
+                                            println!("  {} {}", "Changes detected:".bold(), result.changes_count);
+                                            println!("  {} {}", "Exposures detected:".bold(), result.exposures_count);
+                                            println!("  {} {:.1}s", "Duration:".bold(), result.duration_secs);
+                                        } else {
+                                            let orchestrator = DefensiveOrchestrator::new(
+                                                scope,
+                                                60,
+                                                true,
+                                                true,
+                                                true,
+                                                policy,
+                                                storage.clone(),
+                                            );
+                                            let monitor_id = orchestrator.start_daemon().await?;
+                                            self.show_success(&format!(
+                                                "Continuous monitor started (ID: {})",
+                                                monitor_id
+                                            ));
+                                            self.show_info("Use 'Stop Monitoring' to disable it later");
+                                        }
                                     }
                                     Ok(None) => self.show_error("Selected scope not found"),
                                     Err(e) => self.show_error(&format!("Failed to load scope: {}", e)),
@@ -878,15 +1165,145 @@ impl Menu {
                     self.wait_enter();
                 }
                 DefensiveMenuOption::StopMonitor => {
-                    self.show_info("No active monitors");
+                    if let Some(ref storage) = self.storage {
+                        let all_monitors = storage.list_monitors(None).await?;
+                        let running: Vec<MonitorInfo> = all_monitors
+                            .into_iter()
+                            .filter(|m| m.status == "running")
+                            .collect();
+
+                        if running.is_empty() {
+                            self.show_info("No active monitors");
+                        } else {
+                            self.show_monitors_table("Stop Monitoring ⏹", &running);
+                            let mut options: Vec<String> = running
+                                .iter()
+                                .map(|m| {
+                                    format!(
+                                        "{} | {} | {} checks",
+                                        Self::truncate_chars(&m.id, 12),
+                                        Self::truncate_chars(&m.scope_id, 18),
+                                        m.check_count
+                                    )
+                                })
+                                .collect();
+                            options.push("↩ Cancel".to_string());
+
+                            let selected = Select::with_theme(&ColorfulTheme::default())
+                                .with_prompt("Select monitor to stop")
+                                .items(&options)
+                                .default(0)
+                                .interact_opt()
+                                .ok()
+                                .flatten();
+
+                            if let Some(idx) = selected {
+                                if idx < running.len() {
+                                    let monitor_id = running[idx].id.clone();
+                                    if self.confirm(&format!("Stop monitor {}?", monitor_id)) {
+                                        storage.update_monitor_status(&monitor_id, "stopped").await?;
+                                        self.show_success(&format!("Monitor {} stopped", monitor_id));
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        self.show_error("Storage not initialized");
+                    }
                     self.wait_enter();
                 }
                 DefensiveMenuOption::ViewAlerts => {
-                    self.show_info("No alerts");
+                    if let Some(ref storage) = self.storage {
+                        let scopes = self.get_scope_list().await;
+                        if let Some(scope_id) = self.prompt_scope(&scopes) {
+                            let threshold = storage
+                                .get_alert_config(&scope_id)
+                                .await?
+                                .map(|cfg| cfg.min_severity)
+                                .unwrap_or_else(|| "medium".to_string());
+
+                            let findings = storage
+                                .list_findings(
+                                    None,
+                                    Some(&scope_id),
+                                    None,
+                                    Some("open".to_string()),
+                                    None,
+                                    200,
+                                    "severity",
+                                )
+                                .await?;
+                            let filtered: Vec<_> = findings
+                                .into_iter()
+                                .filter(|f| Self::severity_meets_threshold(&f.severity, &threshold))
+                                .collect();
+
+                            if filtered.is_empty() {
+                                self.show_info(&format!(
+                                    "No open alerts at '{}' severity or higher for this scope",
+                                    threshold
+                                ));
+                            } else {
+                                let rows: Vec<(String, String, String, String)> = filtered
+                                    .iter()
+                                    .map(|f| {
+                                        (
+                                            f.id.clone(),
+                                            f.severity.clone(),
+                                            f.title.clone(),
+                                            f.asset.clone(),
+                                        )
+                                    })
+                                    .collect();
+                                self.show_findings_table(&rows);
+                                println!(
+                                    "  {} {}",
+                                    "Alert threshold:".bold(),
+                                    threshold.cyan()
+                                );
+                            }
+                        }
+                    } else {
+                        self.show_error("Storage not initialized");
+                    }
                     self.wait_enter();
                 }
                 DefensiveMenuOption::ConfigureAlerts => {
-                    self.show_info("Alert configuration coming soon");
+                    if let Some(ref storage) = self.storage {
+                        let scopes = self.get_scope_list().await;
+                        if let Some(scope_id) = self.prompt_scope(&scopes) {
+                            let existing = storage.get_alert_config(&scope_id).await?;
+                            let default_dest = existing
+                                .as_ref()
+                                .map(|cfg| cfg.destination.clone())
+                                .unwrap_or_else(|| "stdout://console".to_string());
+                            let destination =
+                                self.prompt_string("Alert destination (email/webhook/slack URI)", &default_dest);
+
+                            let levels = ["critical", "high", "medium", "low", "info"];
+                            let default_idx = existing
+                                .as_ref()
+                                .and_then(|cfg| levels.iter().position(|l| *l == cfg.min_severity))
+                                .unwrap_or(2);
+                            let level_label: Vec<String> = levels
+                                .iter()
+                                .map(|l| format!("{} and above", l))
+                                .collect();
+                            let level_ref: Vec<&str> = level_label.iter().map(String::as_str).collect();
+                            let level_idx = self.select_index("Minimum alert severity", &level_ref, default_idx);
+                            let min_severity = levels[level_idx];
+
+                            storage
+                                .set_alert_config(&scope_id, &destination, min_severity)
+                                .await?;
+                            self.show_success("Alert configuration updated");
+                            println!("  {} {}", "Scope:".bold(), scope_id);
+                            println!("  {} {}", "Destination:".bold(), destination);
+                            println!("  {} {}", "Minimum severity:".bold(), min_severity);
+                        }
+                    } else {
+                        self.show_error("Storage not initialized");
+                    }
                     self.wait_enter();
                 }
                 DefensiveMenuOption::Back => break,

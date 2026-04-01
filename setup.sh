@@ -4,6 +4,17 @@
 
 set -e
 
+# Ephemeral logs for this setup run
+BUILD_LOG="$(mktemp /tmp/aegis_build.XXXXXX.log)"
+TEST_LOG="$(mktemp /tmp/aegis_test.XXXXXX.log)"
+PRESERVE_LOGS=0
+cleanup_logs() {
+    if [ "$PRESERVE_LOGS" -eq 0 ]; then
+        rm -f "$BUILD_LOG" "$TEST_LOG"
+    fi
+}
+trap cleanup_logs EXIT
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -195,7 +206,7 @@ build_release() {
     echo ""
     
     # Build and capture output while preserving cargo exit status
-    cargo build --release 2>&1 | tee /tmp/aegis_build.log | while IFS= read -r line; do
+    cargo build --release 2>&1 | tee "$BUILD_LOG" | while IFS= read -r line; do
         if [[ "$line" == *"Compiling"* ]]; then
             crate=$(echo "$line" | sed 's/.*Compiling \([^ ]*\).*/\1/')
             echo -e "\r  ${DIM}Building: ${crate}${NC}                              \r"
@@ -208,11 +219,14 @@ build_release() {
     if [ "$build_status" -eq 0 ]; then
         echo -e "\r                                                              "
         log_success "Build complete!"
+        rm -f "$BUILD_LOG"
     else
+        PRESERVE_LOGS=1
         echo ""
-        log_error "Build failed! See errors above or check /tmp/aegis_build.log"
+        log_error "Build failed! See errors above or check $BUILD_LOG"
         echo ""
-        tail -30 /tmp/aegis_build.log
+        tail -30 "$BUILD_LOG"
+        log_warn "Full build log preserved at: $BUILD_LOG"
         return 1
     fi
 }
@@ -224,6 +238,8 @@ verify_build() {
     else
         log_error "Build failed - binary not found"
         log_warn "Check build output: cargo build --release 2>&1 | less"
+        PRESERVE_LOGS=1
+        log_warn "Build log preserved at: $BUILD_LOG"
         return 1
     fi
 }
@@ -305,8 +321,15 @@ show_menu() {
 
 run_tests() {
     log_step "Running tests..."
-    cargo test --all-features 2>&1 | tail -20
-    echo ""
+    if cargo test --all-features 2>&1 | tee "$TEST_LOG"; then
+        log_success "Tests completed successfully"
+    else
+        PRESERVE_LOGS=1
+        log_error "Tests failed. Showing last 40 lines:"
+        tail -40 "$TEST_LOG"
+        log_warn "Full test log preserved at: $TEST_LOG"
+        return 1
+    fi
 }
 
 full_setup() {

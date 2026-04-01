@@ -157,11 +157,14 @@ impl WebReconEngine {
         self.policy.wait_for_rate_limit().await;
 
         let mut endpoints = Vec::new();
+        let mut had_successful_response = false;
 
         let mut last_error: Option<(String, reqwest::Error)> = None;
         for candidate_url in self.candidate_urls(url) {
             match self.client.get(&candidate_url).send().await {
                 Ok(response) => {
+                    had_successful_response = true;
+                    last_error = None;
                 if let Ok(body) = response.text().await {
                     // Find script tags and extract URLs
                         let script_urls = self.extract_script_urls(&body, &candidate_url);
@@ -195,7 +198,7 @@ impl WebReconEngine {
             }
         }
 
-        if endpoints.is_empty() {
+        if !had_successful_response {
             if let Some((failed_url, e)) = last_error {
                 tracing::warn!("JS endpoint discovery failed for {}: {}", failed_url, e);
             }

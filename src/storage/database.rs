@@ -592,6 +592,83 @@ impl Storage {
         Ok(())
     }
 
+    /// Update scan progress percentage
+    pub async fn update_scan_progress(&self, id: &str, progress: i32) -> Result<()> {
+        sqlx::query("UPDATE scan_runs SET progress = ? WHERE id = ?")
+            .bind(progress.clamp(0, 100))
+            .bind(id)
+            .execute(self.pool.as_ref())
+            .await?;
+        Ok(())
+    }
+
+    /// Update findings count for a scan run
+    pub async fn update_scan_findings_count(&self, id: &str, findings_count: i32) -> Result<()> {
+        sqlx::query("UPDATE scan_runs SET findings_count = ? WHERE id = ?")
+            .bind(findings_count.max(0))
+            .bind(id)
+            .execute(self.pool.as_ref())
+            .await?;
+        Ok(())
+    }
+
+    /// List scan runs
+    pub async fn list_scan_runs(
+        &self,
+        status: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<ScanRunInfo>> {
+        let query = if status.is_some() {
+            r#"
+            SELECT id, program, scope_id, run_type, status, progress, findings_count, started_at, ended_at
+            FROM scan_runs
+            WHERE status = ?
+            ORDER BY started_at DESC
+            LIMIT ?
+            "#
+        } else {
+            r#"
+            SELECT id, program, scope_id, run_type, status, progress, findings_count, started_at, ended_at
+            FROM scan_runs
+            ORDER BY started_at DESC
+            LIMIT ?
+            "#
+        };
+
+        let rows: Vec<(String, String, String, String, String, i32, i32, String, Option<String>)> =
+            if let Some(s) = status {
+                sqlx::query_as(query)
+                    .bind(s)
+                    .bind(limit as i64)
+                    .fetch_all(self.pool.as_ref())
+                    .await?
+            } else {
+                sqlx::query_as(query)
+                    .bind(limit as i64)
+                    .fetch_all(self.pool.as_ref())
+                    .await?
+            };
+
+        Ok(rows
+            .into_iter()
+            .map(
+                |(id, program, scope_id, run_type, status, progress, findings_count, started_at, ended_at)| {
+                    ScanRunInfo {
+                        id,
+                        program,
+                        scope_id,
+                        run_type,
+                        status,
+                        progress,
+                        findings_count,
+                        started_at,
+                        ended_at,
+                    }
+                },
+            )
+            .collect())
+    }
+
     // ==================== Findings Operations ====================
 
     /// Save a finding
@@ -1154,6 +1231,24 @@ impl Storage {
                 check_count,
             })
             .collect())
+    }
+
+    /// Update monitor status
+    pub async fn update_monitor_status(&self, id: &str, status: &str) -> Result<()> {
+        let clear_next_check = status == "stopped" || status == "failed";
+        sqlx::query(
+            r#"
+            UPDATE monitors
+            SET status = ?, next_check = CASE WHEN ? THEN NULL ELSE next_check END
+            WHERE id = ?
+            "#,
+        )
+        .bind(status)
+        .bind(clear_next_check)
+        .bind(id)
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(())
     }
 
     // ==================== Alert Operations ====================
