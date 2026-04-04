@@ -2,12 +2,17 @@
 
 # Build artifacts
 /target/
+**/target/
 debug/
 release/
+build/
+dist/
+.cache/
+.sqlx/
 
 # Cargo lock is included for applications, excluded for libraries
 # Uncomment if this is a library:
-# Cargo.lock
+Cargo.lock
 
 # Coverage reports
 /coverage/
@@ -56,3 +61,8 @@ temp/
 
 # Test output
 test-output/
+
+# Strict mode: ignore any newly created files by default.
+# Tracked files remain tracked; this prevents accidental new-file commits.
+*
+!*/

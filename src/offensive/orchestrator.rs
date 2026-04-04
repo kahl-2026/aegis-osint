@@ -56,11 +56,7 @@ impl OffensiveOrchestrator {
     }
 
     /// Execute the offensive scan
-    pub async fn execute<F>(
-        &self,
-        run_id: &str,
-        mut progress_callback: F,
-    ) -> Result<ScanSummary>
+    pub async fn execute<F>(&self, run_id: &str, mut progress_callback: F) -> Result<ScanSummary>
     where
         F: FnMut(&str, u8),
     {
@@ -131,7 +127,8 @@ impl OffensiveOrchestrator {
             self.scope.clone(),
             self.policy.clone(),
             self.storage.clone(),
-        ).await?;
+        )
+        .await?;
 
         let mut total = 0;
 
@@ -139,9 +136,14 @@ impl OffensiveOrchestrator {
         for item in &self.scope.items {
             if item.in_scope {
                 if let Some(base_domain) = self.extract_base_domain(&item.value) {
-                    if let Ok(subdomains) = discovery.discover_ct_logs(&base_domain).await {
-                        total += subdomains.len();
-                        metrics.ct_subdomains += subdomains.len();
+                    match discovery.discover_ct_logs(&base_domain).await {
+                        Ok(subdomains) => {
+                            total += subdomains.len();
+                            metrics.ct_subdomains += subdomains.len();
+                        }
+                        Err(e) => {
+                            tracing::warn!("CT discovery failed for {}: {}", base_domain, e);
+                        }
                     }
                 }
             }
@@ -155,20 +157,26 @@ impl OffensiveOrchestrator {
             self.scope.clone(),
             self.policy.clone(),
             self.storage.clone(),
-        ).await?;
+        )
+        .await?;
 
         let mut total = 0;
 
         for item in &self.scope.items {
             if item.in_scope {
                 if let Some(domain) = self.extract_base_domain(&item.value) {
-                    if let Ok(result) = discovery.discover_dns(&domain).await {
-                        let count = result.a_records.len()
-                            + result.mx_records.len()
-                            + result.ns_records.len()
-                            + result.txt_records.len();
-                        total += result.a_records.len();
-                        metrics.dns_records += count;
+                    match discovery.discover_dns(&domain).await {
+                        Ok(result) => {
+                            let count = result.a_records.len()
+                                + result.mx_records.len()
+                                + result.ns_records.len()
+                                + result.txt_records.len();
+                            total += result.a_records.len();
+                            metrics.dns_records += count;
+                        }
+                        Err(e) => {
+                            tracing::warn!("DNS discovery failed for {}: {}", domain, e);
+                        }
                     }
                 }
             }
@@ -194,7 +202,11 @@ impl OffensiveOrchestrator {
 
         for target in targets {
             for port in ports {
-                if discovery.fingerprint_service(&target.value, port).await?.is_some() {
+                if discovery
+                    .fingerprint_service(&target.value, port)
+                    .await?
+                    .is_some()
+                {
                     fingerprinted += 1;
                 }
             }
@@ -219,20 +231,32 @@ impl OffensiveOrchestrator {
                 };
 
                 // Analyze headers
-                if let Ok(result) = web_engine.analyze_headers(&url).await {
-                    let header_issues =
-                        result.missing_security_headers.len() + result.misconfigured_headers.len();
-                    findings += header_issues;
-                    metrics.header_issues += header_issues;
+                match web_engine.analyze_headers(&url).await {
+                    Ok(result) => {
+                        let header_issues = result.missing_security_headers.len()
+                            + result.misconfigured_headers.len();
+                        findings += header_issues;
+                        metrics.header_issues += header_issues;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Header analysis failed for {}: {}", url, e);
+                    }
                 }
 
                 // Check for misconfigurations
-                if let Ok(misconfigs) = web_engine.check_misconfigurations(&url).await {
-                    findings += misconfigs.len();
-                    metrics.misconfigs += misconfigs.len();
+                match web_engine.check_misconfigurations(&url).await {
+                    Ok(misconfigs) => {
+                        findings += misconfigs.len();
+                        metrics.misconfigs += misconfigs.len();
+                    }
+                    Err(e) => {
+                        tracing::warn!("Misconfiguration check failed for {}: {}", url, e);
+                    }
                 }
 
-                let _ = web_engine.discover_js_endpoints(&url).await;
+                if let Err(e) = web_engine.discover_js_endpoints(&url).await {
+                    tracing::warn!("JS endpoint discovery failed for {}: {}", url, e);
+                }
             }
         }
 
@@ -253,25 +277,45 @@ impl OffensiveOrchestrator {
             let org_name = org.to_lowercase().replace(' ', "-");
 
             // Check cloud providers
-            if let Ok(s3_findings) = cloud_engine.check_s3_exposure(&org_name).await {
-                let count = s3_findings.iter().filter(|f| f.severity != "info").count();
-                findings += count;
-                metrics.cloud_exposures += count;
+            match cloud_engine.check_s3_exposure(&org_name).await {
+                Ok(s3_findings) => {
+                    let count = s3_findings.iter().filter(|f| f.severity != "info").count();
+                    findings += count;
+                    metrics.cloud_exposures += count;
+                }
+                Err(e) => {
+                    tracing::warn!("S3 exposure checks failed for {}: {}", org_name, e);
+                }
             }
 
-            if let Ok(azure_findings) = cloud_engine.check_azure_exposure(&org_name).await {
-                let count = azure_findings.iter().filter(|f| f.severity != "info").count();
-                findings += count;
-                metrics.cloud_exposures += count;
+            match cloud_engine.check_azure_exposure(&org_name).await {
+                Ok(azure_findings) => {
+                    let count = azure_findings
+                        .iter()
+                        .filter(|f| f.severity != "info")
+                        .count();
+                    findings += count;
+                    metrics.cloud_exposures += count;
+                }
+                Err(e) => {
+                    tracing::warn!("Azure exposure checks failed for {}: {}", org_name, e);
+                }
             }
 
-            if let Ok(gcp_findings) = cloud_engine.check_gcp_exposure(&org_name).await {
-                let count = gcp_findings.iter().filter(|f| f.severity != "info").count();
-                findings += count;
-                metrics.cloud_exposures += count;
+            match cloud_engine.check_gcp_exposure(&org_name).await {
+                Ok(gcp_findings) => {
+                    let count = gcp_findings.iter().filter(|f| f.severity != "info").count();
+                    findings += count;
+                    metrics.cloud_exposures += count;
+                }
+                Err(e) => {
+                    tracing::warn!("GCP exposure checks failed for {}: {}", org_name, e);
+                }
             }
 
-            let _ = cloud_engine.check_github_exposure(&org_name).await;
+            if let Err(e) = cloud_engine.check_github_exposure(&org_name).await {
+                tracing::warn!("GitHub exposure checks failed for {}: {}", org_name, e);
+            }
         }
 
         Ok(findings)

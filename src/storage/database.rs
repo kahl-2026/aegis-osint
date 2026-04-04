@@ -230,10 +230,9 @@ impl Storage {
 
         // We still need a SQLite pool for compatibility, but it won't be used
         let temp_db = std::env::temp_dir().join("aegis_temp.db");
-        let sqlite_options = SqliteConnectOptions::from_str(
-            &format!("sqlite://{}?mode=rwc", temp_db.display())
-        )?
-            .create_if_missing(true);
+        let sqlite_options =
+            SqliteConnectOptions::from_str(&format!("sqlite://{}?mode=rwc", temp_db.display()))?
+                .create_if_missing(true);
         let pool = SqlitePoolOptions::new()
             .max_connections(1)
             .connect_with(sqlite_options)
@@ -395,7 +394,7 @@ impl Storage {
                 CREATE INDEX IF NOT EXISTS idx_findings_status ON findings(status);
                 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_log(timestamp);
             "#;
-            
+
             sqlx::query(pg_schema).execute(pg_pool.as_ref()).await?;
         }
         Ok(())
@@ -403,9 +402,7 @@ impl Storage {
 
     /// Health check
     pub async fn health_check(&self) -> Result<()> {
-        sqlx::query("SELECT 1")
-            .execute(self.pool.as_ref())
-            .await?;
+        sqlx::query("SELECT 1").execute(self.pool.as_ref()).await?;
         Ok(())
     }
 
@@ -444,12 +441,10 @@ impl Storage {
 
     /// Get a scope by ID
     pub async fn get_scope(&self, id: &str) -> Result<Option<Scope>> {
-        let row: Option<(String,)> = sqlx::query_as(
-            "SELECT data FROM scopes WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_optional(self.pool.as_ref())
-        .await?;
+        let row: Option<(String,)> = sqlx::query_as("SELECT data FROM scopes WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.pool.as_ref())
+            .await?;
 
         match row {
             Some((data,)) => Ok(Some(serde_json::from_str(&data)?)),
@@ -460,9 +455,7 @@ impl Storage {
     /// List scopes
     pub async fn list_scopes(&self, program: Option<&str>) -> Result<Vec<ScopeSummary>> {
         let query = match program {
-            Some(_) => {
-                "SELECT id, name, program_id, active, data FROM scopes WHERE program_id = ?"
-            }
+            Some(_) => "SELECT id, name, program_id, active, data FROM scopes WHERE program_id = ?",
             None => "SELECT id, name, program_id, active, data FROM scopes",
         };
 
@@ -473,11 +466,7 @@ impl Storage {
                     .fetch_all(self.pool.as_ref())
                     .await?
             }
-            None => {
-                sqlx::query_as(query)
-                    .fetch_all(self.pool.as_ref())
-                    .await?
-            }
+            None => sqlx::query_as(query).fetch_all(self.pool.as_ref()).await?,
         };
 
         let mut summaries = Vec::new();
@@ -557,19 +546,27 @@ impl Storage {
             .await?;
 
         match row {
-            Some((id, program, scope_id, run_type, status, progress, findings_count, started_at, ended_at)) => {
-                Ok(Some(ScanRunInfo {
-                    id,
-                    program,
-                    scope_id,
-                    run_type,
-                    status,
-                    progress,
-                    findings_count,
-                    started_at,
-                    ended_at,
-                }))
-            }
+            Some((
+                id,
+                program,
+                scope_id,
+                run_type,
+                status,
+                progress,
+                findings_count,
+                started_at,
+                ended_at,
+            )) => Ok(Some(ScanRunInfo {
+                id,
+                program,
+                scope_id,
+                run_type,
+                status,
+                progress,
+                findings_count,
+                started_at,
+                ended_at,
+            })),
             None => Ok(None),
         }
     }
@@ -582,12 +579,14 @@ impl Storage {
             None
         };
 
-        sqlx::query("UPDATE scan_runs SET status = ?, ended_at = COALESCE(?, ended_at) WHERE id = ?")
-            .bind(status)
-            .bind(&now)
-            .bind(id)
-            .execute(self.pool.as_ref())
-            .await?;
+        sqlx::query(
+            "UPDATE scan_runs SET status = ?, ended_at = COALESCE(?, ended_at) WHERE id = ?",
+        )
+        .bind(status)
+        .bind(&now)
+        .bind(id)
+        .execute(self.pool.as_ref())
+        .await?;
 
         Ok(())
     }
@@ -635,24 +634,43 @@ impl Storage {
             "#
         };
 
-        let rows: Vec<(String, String, String, String, String, i32, i32, String, Option<String>)> =
-            if let Some(s) = status {
-                sqlx::query_as(query)
-                    .bind(s)
-                    .bind(limit as i64)
-                    .fetch_all(self.pool.as_ref())
-                    .await?
-            } else {
-                sqlx::query_as(query)
-                    .bind(limit as i64)
-                    .fetch_all(self.pool.as_ref())
-                    .await?
-            };
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            String,
+            String,
+            i32,
+            i32,
+            String,
+            Option<String>,
+        )> = if let Some(s) = status {
+            sqlx::query_as(query)
+                .bind(s)
+                .bind(limit as i64)
+                .fetch_all(self.pool.as_ref())
+                .await?
+        } else {
+            sqlx::query_as(query)
+                .bind(limit as i64)
+                .fetch_all(self.pool.as_ref())
+                .await?
+        };
 
         Ok(rows
             .into_iter()
             .map(
-                |(id, program, scope_id, run_type, status, progress, findings_count, started_at, ended_at)| {
+                |(
+                    id,
+                    program,
+                    scope_id,
+                    run_type,
+                    status,
+                    progress,
+                    findings_count,
+                    started_at,
+                    ended_at,
+                )| {
                     ScanRunInfo {
                         id,
                         program,
@@ -769,10 +787,10 @@ impl Storage {
             Some(row) => {
                 use sqlx::Row;
                 let finding_id: String = row.get("id");
-                
+
                 // Get evidence
                 let evidence = self.get_evidence_for_finding(&finding_id).await?;
-                
+
                 // Convert scope_verified from INTEGER to bool
                 let scope_verified_int: i32 = row.get("scope_verified");
 
@@ -868,7 +886,8 @@ impl Storage {
         query.push_str(&format!(" ORDER BY {} LIMIT {}", order, limit));
 
         // Build and execute query dynamically
-        let mut q = sqlx::query_as::<_, (String, String, String, String, i32, Option<String>)>(&query);
+        let mut q =
+            sqlx::query_as::<_, (String, String, String, String, i32, Option<String>)>(&query);
         for param in &params {
             q = q.bind(param);
         }
@@ -877,14 +896,16 @@ impl Storage {
 
         Ok(rows
             .into_iter()
-            .map(|(id, asset, title, severity, confidence, status)| FindingSummary {
-                id,
-                asset,
-                title,
-                severity,
-                confidence,
-                status,
-            })
+            .map(
+                |(id, asset, title, severity, confidence, status)| FindingSummary {
+                    id,
+                    asset,
+                    title,
+                    severity,
+                    confidence,
+                    status,
+                },
+            )
             .collect())
     }
 
@@ -974,7 +995,11 @@ impl Storage {
     /// Save an asset
     pub async fn save_asset(&self, asset: &Asset) -> Result<()> {
         let tags = serde_json::to_string(&asset.tags)?;
-        let metadata = asset.metadata.as_ref().map(|m| serde_json::to_string(m)).transpose()?;
+        let metadata = asset
+            .metadata
+            .as_ref()
+            .map(|m| serde_json::to_string(m))
+            .transpose()?;
 
         sqlx::query(
             r#"
@@ -1051,7 +1076,19 @@ impl Storage {
 
         query.push_str(&format!(" LIMIT {}", limit));
 
-        let mut q = sqlx::query_as::<_, (String, String, String, String, String, Option<String>, String, String)>(&query);
+        let mut q = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                String,
+                Option<String>,
+                String,
+                String,
+            ),
+        >(&query);
 
         if let Some(s) = scope {
             q = q.bind(s);
@@ -1105,7 +1142,11 @@ impl Storage {
         Ok(AssetDiff {
             added: added
                 .into_iter()
-                .map(|(id, value, asset_type)| AssetDiffItem { id, value, asset_type })
+                .map(|(id, value, asset_type)| AssetDiffItem {
+                    id,
+                    value,
+                    asset_type,
+                })
                 .collect(),
             removed: vec![],
             modified: vec![],
@@ -1142,6 +1183,29 @@ impl Storage {
             .collect())
     }
 
+    /// Save an asset history event
+    pub async fn save_asset_history_event(
+        &self,
+        asset_id: &str,
+        event_type: &str,
+        description: &str,
+        timestamp: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            r#"
+            INSERT INTO asset_history (asset_id, event_type, description, timestamp)
+            VALUES (?, ?, ?, ?)
+            "#,
+        )
+        .bind(asset_id)
+        .bind(event_type)
+        .bind(description)
+        .bind(timestamp)
+        .execute(self.pool.as_ref())
+        .await?;
+        Ok(())
+    }
+
     /// Get findings for an asset
     pub async fn get_findings_for_asset(&self, asset_id: &str) -> Result<Vec<FindingSummary>> {
         // Get asset value first
@@ -1157,14 +1221,16 @@ impl Storage {
 
         Ok(rows
             .into_iter()
-            .map(|(id, asset, title, severity, confidence, status)| FindingSummary {
-                id,
-                asset,
-                title,
-                severity,
-                confidence,
-                status,
-            })
+            .map(
+                |(id, asset, title, severity, confidence, status)| FindingSummary {
+                    id,
+                    asset,
+                    title,
+                    severity,
+                    confidence,
+                    status,
+                },
+            )
             .collect())
     }
 
@@ -1205,31 +1271,39 @@ impl Storage {
             }
         };
 
-        let rows: Vec<(String, String, String, String, Option<String>, Option<String>, i32)> = match scope {
+        let rows: Vec<(
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            i32,
+        )> = match scope {
             Some(s) => {
                 sqlx::query_as(query)
                     .bind(s)
                     .fetch_all(self.pool.as_ref())
                     .await?
             }
-            None => {
-                sqlx::query_as(query)
-                    .fetch_all(self.pool.as_ref())
-                    .await?
-            }
+            None => sqlx::query_as(query).fetch_all(self.pool.as_ref()).await?,
         };
 
         Ok(rows
             .into_iter()
-            .map(|(id, scope_id, status, started_at, last_check, next_check, check_count)| MonitorInfo {
-                id,
-                scope_id,
-                status,
-                started_at,
-                last_check: last_check.unwrap_or_else(|| "Never".to_string()),
-                next_check: next_check.unwrap_or_else(|| "Pending".to_string()),
-                check_count,
-            })
+            .map(
+                |(id, scope_id, status, started_at, last_check, next_check, check_count)| {
+                    MonitorInfo {
+                        id,
+                        scope_id,
+                        status,
+                        started_at,
+                        last_check: last_check.unwrap_or_else(|| "Never".to_string()),
+                        next_check: next_check.unwrap_or_else(|| "Pending".to_string()),
+                        check_count,
+                    }
+                },
+            )
             .collect())
     }
 
@@ -1262,11 +1336,13 @@ impl Storage {
         .fetch_optional(self.pool.as_ref())
         .await?;
 
-        Ok(row.map(|(destination, min_severity, enabled_int)| AlertConfig {
-            destination,
-            min_severity,
-            enabled: enabled_int != 0,
-        }))
+        Ok(
+            row.map(|(destination, min_severity, enabled_int)| AlertConfig {
+                destination,
+                min_severity,
+                enabled: enabled_int != 0,
+            }),
+        )
     }
 
     /// Set alert config
@@ -1319,12 +1395,11 @@ impl Storage {
         .fetch_one(self.pool.as_ref())
         .await?;
 
-        let (ip_count,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM assets WHERE scope_id = ? AND asset_type = 'ip'",
-        )
-        .bind(scope_id)
-        .fetch_one(self.pool.as_ref())
-        .await?;
+        let (ip_count,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM assets WHERE scope_id = ? AND asset_type = 'ip'")
+                .bind(scope_id)
+                .fetch_one(self.pool.as_ref())
+                .await?;
 
         let (service_count,): (i64,) = sqlx::query_as(
             "SELECT COUNT(*) FROM assets WHERE scope_id = ? AND asset_type = 'service'",
@@ -1363,8 +1438,48 @@ impl Storage {
         .await?;
 
         // Count changes in period
-        let (assets_added,): (i64,) = sqlx::query_as(
-            "SELECT COUNT(*) FROM assets WHERE scope_id = ? AND first_seen > ?",
+        let (assets_added,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM assets WHERE scope_id = ? AND first_seen > ?")
+                .bind(scope_id)
+                .bind(&since)
+                .fetch_one(self.pool.as_ref())
+                .await?;
+
+        let (assets_removed,): (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM asset_history h
+            JOIN assets a ON a.id = h.asset_id
+            WHERE a.scope_id = ? AND h.timestamp > ? AND h.event_type = 'asset_removed'
+            "#,
+        )
+        .bind(scope_id)
+        .bind(&since)
+        .fetch_one(self.pool.as_ref())
+        .await?;
+
+        let (config_changes,): (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM asset_history h
+            JOIN assets a ON a.id = h.asset_id
+            WHERE a.scope_id = ?
+              AND h.timestamp > ?
+              AND h.event_type IN ('dns_change', 'service_change', 'drift_change')
+            "#,
+        )
+        .bind(scope_id)
+        .bind(&since)
+        .fetch_one(self.pool.as_ref())
+        .await?;
+
+        let (cert_changes,): (i64,) = sqlx::query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM asset_history h
+            JOIN assets a ON a.id = h.asset_id
+            WHERE a.scope_id = ? AND h.timestamp > ? AND h.event_type = 'cert_change'
+            "#,
         )
         .bind(scope_id)
         .bind(&since)
@@ -1380,11 +1495,11 @@ impl Storage {
             high_findings: high_findings as usize,
             medium_findings: medium_findings as usize,
             low_findings: low_findings as usize,
-            asset_changes: assets_added as usize,
+            asset_changes: (assets_added + assets_removed) as usize,
             assets_added: assets_added as usize,
-            assets_removed: 0,
-            config_changes: 0,
-            cert_changes: 0,
+            assets_removed: assets_removed as usize,
+            config_changes: config_changes as usize,
+            cert_changes: cert_changes as usize,
         })
     }
 
@@ -1392,7 +1507,11 @@ impl Storage {
 
     /// Log an audit entry
     pub async fn log_audit_entry(&self, entry: &AuditEntry) -> Result<()> {
-        let metadata = entry.metadata.as_ref().map(|m| serde_json::to_string(m)).transpose()?;
+        let metadata = entry
+            .metadata
+            .as_ref()
+            .map(|m| serde_json::to_string(m))
+            .transpose()?;
 
         sqlx::query(
             r#"
