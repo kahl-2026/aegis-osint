@@ -72,7 +72,7 @@ cargo install --path .
 # Fedora: sudo dnf install gcc sqlite-devel openssl-devel bind-utils whois pkgconfig git curl
 ```
 
-The interactive CLI menu uses arrow-key selection via `dialoguer`, and scan/report output is tuned for readable terminal summaries.
+The interactive CLI experience uses a full-screen keyboard-first TUI (ratatui/crossterm) with compact dark-theme panels and arrow/enter/esc navigation for faster workflows.
 
 ## Quick Start
 
@@ -186,7 +186,7 @@ aegis report templates [--verbose]
 ```
 aegis doctor                         Health check
 aegis init                           First-run authorization flow
-aegis menu                           Launch interactive menu
+aegis menu                           Launch full-screen interactive TUI
 ```
 
 ## Scope File Format

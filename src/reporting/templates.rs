@@ -4,7 +4,6 @@
 //! HTML/Markdown rendering currently lives in `generator.rs`.
 
 /// Template configuration
-#[allow(dead_code)]
 pub struct TemplateConfig {
     pub include_evidence: bool,
     pub include_remediation: bool,

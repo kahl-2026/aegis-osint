@@ -1138,7 +1138,42 @@ impl Storage {
         .fetch_all(self.pool.as_ref())
         .await?;
 
-        // For removed/modified we'd need historical tracking
+        let removed: Vec<(String, String, String)> = sqlx::query_as(
+            r#"
+            SELECT DISTINCT
+                h.asset_id,
+                COALESCE(a.value, h.asset_id) AS value,
+                COALESCE(a.asset_type, 'unknown') AS asset_type
+            FROM asset_history h
+            LEFT JOIN assets a ON a.id = h.asset_id
+            WHERE h.timestamp > ?
+              AND h.event_type = 'asset_removed'
+              AND (a.scope_id = ? OR a.scope_id IS NULL)
+            "#,
+        )
+        .bind(&since_date)
+        .bind(scope_id)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+
+        let modified: Vec<(String, String, String)> = sqlx::query_as(
+            r#"
+            SELECT DISTINCT
+                h.asset_id,
+                COALESCE(a.value, h.asset_id) AS value,
+                COALESCE(a.asset_type, 'unknown') AS asset_type
+            FROM asset_history h
+            LEFT JOIN assets a ON a.id = h.asset_id
+            WHERE h.timestamp > ?
+              AND h.event_type IN ('dns_change', 'cert_change', 'service_change', 'drift_change')
+              AND (a.scope_id = ? OR a.scope_id IS NULL)
+            "#,
+        )
+        .bind(&since_date)
+        .bind(scope_id)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+
         Ok(AssetDiff {
             added: added
                 .into_iter()
@@ -1148,8 +1183,22 @@ impl Storage {
                     asset_type,
                 })
                 .collect(),
-            removed: vec![],
-            modified: vec![],
+            removed: removed
+                .into_iter()
+                .map(|(id, value, asset_type)| AssetDiffItem {
+                    id,
+                    value,
+                    asset_type,
+                })
+                .collect(),
+            modified: modified
+                .into_iter()
+                .map(|(id, value, asset_type)| AssetDiffItem {
+                    id,
+                    value,
+                    asset_type,
+                })
+                .collect(),
         })
     }
 

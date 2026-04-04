@@ -1,10 +1,10 @@
 //! Finding verification
 
 use crate::storage::{Finding, Storage};
+use crate::utils::http::HttpClient;
 use anyhow::Result;
 
 /// Finding verifier
-#[allow(dead_code)]
 pub struct FindingVerifier {
     storage: Storage,
 }
@@ -17,6 +17,14 @@ impl FindingVerifier {
 
     /// Verify a finding
     pub async fn verify(&self, finding: &Finding) -> Result<VerificationResult> {
+        if self.storage.get_finding(&finding.id).await?.is_none() {
+            return Ok(VerificationResult {
+                verified: false,
+                reason: "Finding no longer exists in storage".to_string(),
+                details: None,
+            });
+        }
+
         // Verification depends on finding type
         match finding.finding_type.as_str() {
             "security-header" => self.verify_header_finding(finding).await,
@@ -31,12 +39,9 @@ impl FindingVerifier {
     }
 
     async fn verify_header_finding(&self, finding: &Finding) -> Result<VerificationResult> {
-        // Re-check the headers
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?;
+        let client = HttpClient::new("AegisOSINT-Verifier", 10)?;
 
-        match client.head(&finding.asset).send().await {
+        match client.head(&finding.asset).await {
             Ok(response) => {
                 // Check if the issue still exists
                 let security_headers = [
@@ -76,11 +81,9 @@ impl FindingVerifier {
     }
 
     async fn verify_cloud_finding(&self, finding: &Finding) -> Result<VerificationResult> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?;
+        let client = HttpClient::new("AegisOSINT-Verifier", 10)?;
 
-        match client.head(&finding.asset).send().await {
+        match client.head(&finding.asset).await {
             Ok(response) => {
                 if response.status().is_success() {
                     Ok(VerificationResult {
@@ -111,11 +114,9 @@ impl FindingVerifier {
     }
 
     async fn verify_misconfig_finding(&self, finding: &Finding) -> Result<VerificationResult> {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?;
+        let client = HttpClient::new("AegisOSINT-Verifier", 10)?;
 
-        match client.head(&finding.asset).send().await {
+        match client.head(&finding.asset).await {
             Ok(response) => {
                 if response.status().is_success() {
                     Ok(VerificationResult {

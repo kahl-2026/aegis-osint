@@ -1,22 +1,27 @@
 //! Report generator
 
+use super::templates::TemplateConfig;
 use crate::storage::{AttackSurfaceSummary, FindingSummary};
 use anyhow::Result;
 use chrono::Utc;
 use pulldown_cmark::{html, Options, Parser};
 
 /// Report generator for various formats
-#[allow(dead_code)]
 pub struct ReportGenerator {
-    include_evidence: bool,
+    config: TemplateConfig,
 }
 
 impl ReportGenerator {
     /// Create a new report generator
     pub fn new() -> Self {
         Self {
-            include_evidence: true,
+            config: TemplateConfig::default(),
         }
+    }
+
+    /// Create a report generator with a custom template config
+    pub fn with_template_config(config: TemplateConfig) -> Self {
+        Self { config }
     }
 
     /// Generate JSON report
@@ -29,7 +34,10 @@ impl ReportGenerator {
         let mut md = String::new();
 
         md.push_str("# Security Assessment Report\n\n");
-        md.push_str(&format!("Generated: {}\n\n", Utc::now().format("%Y-%m-%d %H:%M UTC")));
+        md.push_str(&format!(
+            "Generated: {}\n\n",
+            Utc::now().format("%Y-%m-%d %H:%M UTC")
+        ));
 
         // Summary
         md.push_str("## Summary\n\n");
@@ -51,7 +59,11 @@ impl ReportGenerator {
 
         for (i, finding) in findings.iter().enumerate() {
             md.push_str(&format!("### {}. {}\n\n", i + 1, finding.title));
-            md.push_str(&format!("**Severity:** {} | **Confidence:** {}%\n\n", finding.severity.to_uppercase(), finding.confidence));
+            md.push_str(&format!(
+                "**Severity:** {} | **Confidence:** {}%\n\n",
+                finding.severity.to_uppercase(),
+                finding.confidence
+            ));
             md.push_str(&format!("**Asset:** `{}`\n\n", finding.asset));
             md.push_str("---\n\n");
         }
@@ -78,7 +90,10 @@ impl ReportGenerator {
         html.push_str("</style>\n</head>\n<body>\n");
 
         html.push_str("<h1>Security Assessment Report</h1>\n");
-        html.push_str(&format!("<p>Generated: {}</p>\n", Utc::now().format("%Y-%m-%d %H:%M UTC")));
+        html.push_str(&format!(
+            "<p>Generated: {}</p>\n",
+            Utc::now().format("%Y-%m-%d %H:%M UTC")
+        ));
 
         // Summary
         html.push_str("<h2>Summary</h2>\n");
@@ -88,11 +103,26 @@ impl ReportGenerator {
         let low = findings.iter().filter(|f| f.severity == "low").count();
 
         html.push_str("<table>\n<tr><th>Severity</th><th>Count</th></tr>\n");
-        html.push_str(&format!("<tr><td class='critical'>Critical</td><td>{}</td></tr>\n", critical));
-        html.push_str(&format!("<tr><td class='high'>High</td><td>{}</td></tr>\n", high));
-        html.push_str(&format!("<tr><td class='medium'>Medium</td><td>{}</td></tr>\n", medium));
-        html.push_str(&format!("<tr><td class='low'>Low</td><td>{}</td></tr>\n", low));
-        html.push_str(&format!("<tr><td><strong>Total</strong></td><td><strong>{}</strong></td></tr>\n", findings.len()));
+        html.push_str(&format!(
+            "<tr><td class='critical'>Critical</td><td>{}</td></tr>\n",
+            critical
+        ));
+        html.push_str(&format!(
+            "<tr><td class='high'>High</td><td>{}</td></tr>\n",
+            high
+        ));
+        html.push_str(&format!(
+            "<tr><td class='medium'>Medium</td><td>{}</td></tr>\n",
+            medium
+        ));
+        html.push_str(&format!(
+            "<tr><td class='low'>Low</td><td>{}</td></tr>\n",
+            low
+        ));
+        html.push_str(&format!(
+            "<tr><td><strong>Total</strong></td><td><strong>{}</strong></td></tr>\n",
+            findings.len()
+        ));
         html.push_str("</table>\n");
 
         // Findings
@@ -101,10 +131,19 @@ impl ReportGenerator {
         for finding in findings {
             html.push_str(&format!("<div class='finding'>\n"));
             html.push_str(&format!("<h3>{}</h3>\n", html_escape(&finding.title)));
-            html.push_str(&format!("<p><strong>Severity:</strong> <span class='{}'>{}</span></p>\n",
-                finding.severity, finding.severity.to_uppercase()));
-            html.push_str(&format!("<p><strong>Confidence:</strong> {}%</p>\n", finding.confidence));
-            html.push_str(&format!("<p><strong>Asset:</strong> <code>{}</code></p>\n", html_escape(&finding.asset)));
+            html.push_str(&format!(
+                "<p><strong>Severity:</strong> <span class='{}'>{}</span></p>\n",
+                finding.severity,
+                finding.severity.to_uppercase()
+            ));
+            html.push_str(&format!(
+                "<p><strong>Confidence:</strong> {}%</p>\n",
+                finding.confidence
+            ));
+            html.push_str(&format!(
+                "<p><strong>Asset:</strong> <code>{}</code></p>\n",
+                html_escape(&finding.asset)
+            ));
             html.push_str("</div>\n");
         }
 
@@ -121,13 +160,18 @@ impl ReportGenerator {
             report.push_str(&format!("# {}\n\n", finding.title));
             report.push_str("## Submission Metadata\n");
             report.push_str(&format!("- **Title:** {}\n", finding.title));
-            report.push_str(&format!("- **Severity:** {}\n", finding.severity.to_uppercase()));
+            report.push_str(&format!(
+                "- **Severity:** {}\n",
+                finding.severity.to_uppercase()
+            ));
             report.push_str(&format!("- **Confidence:** {}%\n", finding.confidence));
             report.push_str(&format!("- **Primary Asset:** `{}`\n\n", finding.asset));
 
             report.push_str("## Scope Mapping\n");
             report.push_str(&format!("- In-scope asset observed: `{}`\n", finding.asset));
-            report.push_str("- Program scope verification performed by AegisOSINT policy engine.\n\n");
+            report.push_str(
+                "- Program scope verification performed by AegisOSINT policy engine.\n\n",
+            );
 
             report.push_str("## Impact\n");
             report.push_str(&format!(
@@ -140,15 +184,28 @@ This finding may increase external attack surface risk for the mapped asset.\n\n
             report.push_str("## Reproducibility Notes\n");
             report.push_str("1. Execute authorized scan against approved scope.\n");
             report.push_str("2. Filter findings by the ID below.\n");
-            report.push_str(&format!("3. Confirm evidence and response behavior for `{}`.\n\n", finding.asset));
+            report.push_str(&format!(
+                "3. Confirm evidence and response behavior for `{}`.\n\n",
+                finding.asset
+            ));
 
             report.push_str("## Evidence Links\n");
             report.push_str(&format!("- Finding ID: `{}`\n", finding.id));
-            report.push_str("- Review detailed evidence in local AegisOSINT database (`evidence` records).\n");
-            report.push_str("- Export technical context with: `aegis findings show --id <finding-id> --full`\n\n");
+            if self.config.include_evidence {
+                report.push_str(
+                    "- Review detailed evidence in local AegisOSINT database (`evidence` records).\n",
+                );
+                report.push_str(
+                    "- Export technical context with: `aegis findings show --id <finding-id> --full`\n\n",
+                );
+            } else {
+                report.push('\n');
+            }
 
-            report.push_str("## Suggested Remediation Direction\n");
-            report.push_str("Restrict exposure, enforce least-privilege configuration, and re-validate after fix with `aegis findings verify`.\n\n");
+            if self.config.include_remediation {
+                report.push_str("## Suggested Remediation Direction\n");
+                report.push_str("Restrict exposure, enforce least-privilege configuration, and re-validate after fix with `aegis findings verify`.\n\n");
+            }
             report.push_str("---\n\n");
         }
 
@@ -187,8 +244,14 @@ This finding may increase external attack surface risk for the mapped asset.\n\n
         html.push_str("</style>\n</head>\n<body>\n");
 
         html.push_str("<h1>Executive Security Summary</h1>\n");
-        html.push_str(&format!("<p>Report Date: {}</p>\n", Utc::now().format("%B %d, %Y")));
-        html.push_str(&format!("<p><strong>Overall Risk Level:</strong> {}</p>\n", risk_level));
+        html.push_str(&format!(
+            "<p>Report Date: {}</p>\n",
+            Utc::now().format("%B %d, %Y")
+        ));
+        html.push_str(&format!(
+            "<p><strong>Overall Risk Level:</strong> {}</p>\n",
+            risk_level
+        ));
 
         html.push_str("<div>\n");
         html.push_str(&format!("<div class='metric critical'><div class='metric-value'>{}</div><div class='metric-label'>Critical</div></div>\n", critical));
@@ -222,7 +285,10 @@ This finding may increase external attack surface risk for the mapped asset.\n\n
 
         let mut md = String::new();
         md.push_str("# Executive Security Summary\n\n");
-        md.push_str(&format!("Report Date: {}\n\n", Utc::now().format("%B %d, %Y")));
+        md.push_str(&format!(
+            "Report Date: {}\n\n",
+            Utc::now().format("%B %d, %Y")
+        ));
 
         md.push_str("## Risk Overview\n\n");
         md.push_str(&format!("| Severity | Count |\n|---|---|\n"));

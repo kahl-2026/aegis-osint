@@ -1,23 +1,43 @@
 //! Interactive menu system for AegisOSINT
 
+use super::offensive::ScanProfile;
 use crate::config::{data_dir, Config};
 use crate::defensive::{DefensiveOrchestrator, DefensiveScanner};
 use crate::offensive::OffensiveOrchestrator;
 use crate::policy::PolicyEngine;
-use crate::scope::{Scope, ScopeDefinition, ScopeEngine, ScopeItem, ScopeItemType};
 use crate::reporting::ReportGenerator;
+use crate::scope::{Scope, ScopeDefinition, ScopeEngine, ScopeItem, ScopeItemType};
 use crate::storage::{MonitorInfo, ScanRunInfo, Storage};
 use crate::utils::validation::{validate_asn, validate_cidr, validate_domain, validate_url};
 use anyhow::Result;
 use chrono::Utc;
 use colored::Colorize;
-use dialoguer::{theme::ColorfulTheme, Select};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+use ratatui::backend::CrosstermBackend;
+use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::Terminal;
 use std::io::{self, Write};
-use super::offensive::ScanProfile;
+use std::time::Duration;
 
 const DEFAULT_MENU_RPS: u32 = 10;
 const DEFAULT_MENU_TIMEOUT_SECS: u32 = 30;
 const DEFAULT_MENU_DB_TYPE: &str = "sqlite";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NavigationKey {
+    Up,
+    Down,
+    Confirm,
+    Cancel,
+    None,
+}
 
 /// Main menu options
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -87,7 +107,7 @@ pub struct Menu {
 
 impl Menu {
     pub fn new() -> Self {
-        Self { 
+        Self {
             width: 60,
             storage: None,
             config: None,
@@ -138,12 +158,27 @@ impl Menu {
     /// Print the banner
     pub fn print_banner(&self) {
         self.clear();
-        let version_line = format!("║            AegisOSINT v{}              ║", env!("CARGO_PKG_VERSION"));
+        let version_line = format!(
+            "║            AegisOSINT v{}              ║",
+            env!("CARGO_PKG_VERSION")
+        );
         println!();
-        println!("{}", self.center("╔═══════════════════════════════════════════╗").cyan());
+        println!(
+            "{}",
+            self.center("╔═══════════════════════════════════════════╗")
+                .cyan()
+        );
         println!("{}", self.center(&version_line).cyan());
-        println!("{}", self.center("║   Production OSINT for Bug Bounty & Defense  ║").cyan());
-        println!("{}", self.center("╚═══════════════════════════════════════════╝").cyan());
+        println!(
+            "{}",
+            self.center("║   Production OSINT for Bug Bounty & Defense  ║")
+                .cyan()
+        );
+        println!(
+            "{}",
+            self.center("╚═══════════════════════════════════════════╝")
+                .cyan()
+        );
         println!();
         println!("{}", self.center("⚠️  AUTHORIZED USE ONLY").yellow().bold());
         println!();
@@ -162,7 +197,7 @@ impl Menu {
         if let Err(e) = io::stdout().flush() {
             eprintln!("failed to flush stdout for input prompt: {}", e);
         }
-        
+
         let mut input = String::new();
         match io::stdin().read_line(&mut input) {
             Ok(_) => input.trim().to_string(),
@@ -174,14 +209,159 @@ impl Menu {
     }
 
     fn select_index(&self, prompt: &str, items: &[&str], default: usize) -> usize {
-        Select::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .items(items)
-            .default(default)
-            .interact_opt()
+        let options: Vec<String> = items.iter().map(|item| item.to_string()).collect();
+        self.select_index_owned(prompt, &options, default)
+            .unwrap_or(default)
+    }
+
+    fn select_index_owned(&self, prompt: &str, items: &[String], default: usize) -> Option<usize> {
+        if items.is_empty() {
+            return None;
+        }
+        self.fullscreen_select(prompt, items, default)
             .ok()
             .flatten()
-            .unwrap_or(default)
+    }
+
+    fn fullscreen_select(
+        &self,
+        prompt: &str,
+        items: &[String],
+        default: usize,
+    ) -> Result<Option<usize>> {
+        let mut stdout = io::stdout();
+        enable_raw_mode()?;
+        execute!(stdout, EnterAlternateScreen)?;
+
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal = Terminal::new(backend)?;
+        terminal.clear()?;
+        let mut selected = default.min(items.len().saturating_sub(1));
+        let mut list_state = ListState::default();
+
+        let selection_result: Result<Option<usize>> = (|| loop {
+            list_state.select(Some(selected));
+            terminal.draw(|frame| {
+                let area = frame.area();
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(3),
+                        Constraint::Min(1),
+                        Constraint::Length(2),
+                    ])
+                    .split(area);
+
+                let header = Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        " AegisOSINT ",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(" "),
+                    Span::styled(prompt, Style::default().fg(Color::White)),
+                ]))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Navigation")
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                );
+                frame.render_widget(header, chunks[0]);
+
+                let entries: Vec<ListItem> = items
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, item)| {
+                        let label = if idx == selected {
+                            format!("▶ {}", item)
+                        } else {
+                            format!("  {}", item)
+                        };
+                        ListItem::new(label)
+                    })
+                    .collect();
+
+                let list = List::new(entries)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Menu")
+                            .border_style(Style::default().fg(Color::DarkGray)),
+                    )
+                    .highlight_style(
+                        Style::default()
+                            .fg(Color::Black)
+                            .bg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                    .highlight_symbol(" ");
+                frame.render_stateful_widget(list, chunks[1], &mut list_state);
+
+                let footer = Paragraph::new(" ↑/↓ move  Enter select  Esc cancel ")
+                    .style(Style::default().fg(Color::Gray))
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::DarkGray)),
+                    );
+                frame.render_widget(footer, chunks[2]);
+            })?;
+
+            if event::poll(Duration::from_millis(250))? {
+                if let Event::Key(key) = event::read()? {
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    match Self::map_navigation_key(key.code) {
+                        NavigationKey::Up => selected = Self::prev_index(selected, items.len()),
+                        NavigationKey::Down => selected = Self::next_index(selected, items.len()),
+                        NavigationKey::Confirm => return Ok(Some(selected)),
+                        NavigationKey::Cancel => return Ok(None),
+                        NavigationKey::None => match key.code {
+                            KeyCode::Home => selected = 0,
+                            KeyCode::End => selected = items.len().saturating_sub(1),
+                            _ => {}
+                        },
+                    }
+                }
+            }
+        })();
+
+        disable_raw_mode()?;
+        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+        terminal.show_cursor()?;
+
+        selection_result
+    }
+
+    fn map_navigation_key(code: KeyCode) -> NavigationKey {
+        match code {
+            KeyCode::Up | KeyCode::Char('k') => NavigationKey::Up,
+            KeyCode::Down | KeyCode::Char('j') => NavigationKey::Down,
+            KeyCode::Enter => NavigationKey::Confirm,
+            KeyCode::Esc | KeyCode::Char('q') => NavigationKey::Cancel,
+            _ => NavigationKey::None,
+        }
+    }
+
+    fn next_index(current: usize, len: usize) -> usize {
+        if len == 0 {
+            return 0;
+        }
+        (current + 1) % len
+    }
+
+    fn prev_index(current: usize, len: usize) -> usize {
+        if len == 0 {
+            return 0;
+        }
+        if current == 0 {
+            len - 1
+        } else {
+            current - 1
+        }
     }
 
     fn truncate_chars(value: &str, max_chars: usize) -> String {
@@ -297,14 +477,23 @@ impl Menu {
     pub fn show_help(&self) {
         self.print_banner();
         self.print_header("Help & Documentation ❓");
-        
+
         println!();
-        println!("  {}", "AegisOSINT is a production-grade OSINT platform for:".bold());
+        println!(
+            "  {}",
+            "AegisOSINT is a production-grade OSINT platform for:".bold()
+        );
         println!();
-        println!("  • {} - Authorized bug bounty reconnaissance", "Offensive Mode".cyan());
+        println!(
+            "  • {} - Authorized bug bounty reconnaissance",
+            "Offensive Mode".cyan()
+        );
         println!("    Asset discovery, web recon, cloud exposure checks");
         println!();
-        println!("  • {} - External attack surface monitoring", "Defensive Mode".cyan());
+        println!(
+            "  • {} - External attack surface monitoring",
+            "Defensive Mode".cyan()
+        );
         println!("    Drift detection, brand monitoring, leak alerts");
         println!();
         println!("  {}", self.line().dimmed());
@@ -323,7 +512,7 @@ impl Menu {
         println!("  Only use on systems you have explicit authorization to test.");
         println!("  Unauthorized access is illegal and may result in prosecution.");
         println!();
-        
+
         self.wait_enter();
     }
 
@@ -348,13 +537,7 @@ impl Menu {
             .collect();
         options.push("↩ Cancel".to_string());
 
-        let choice = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt("Select scope")
-            .items(&options)
-            .default(0)
-            .interact_opt()
-            .ok()
-            .flatten();
+        let choice = self.select_index_owned("Select scope", &options, 0);
 
         match choice {
             Some(idx) if idx < scopes.len() => Some(scopes[idx].0.clone()),
@@ -414,8 +597,12 @@ impl Menu {
     pub fn prompt_output_path(&self, default_ext: &str) -> String {
         println!();
         let default = format!("report.{}", default_ext);
-        let input = self.read_input(&format!("  {} Output file [{}]: ", "📄".to_string(), default.dimmed()));
-        
+        let input = self.read_input(&format!(
+            "  {} Output file [{}]: ",
+            "📄".to_string(),
+            default.dimmed()
+        ));
+
         if input.is_empty() {
             default
         } else {
@@ -451,7 +638,12 @@ impl Menu {
             "asn" => "AS12345",
             _ => "example.com",
         };
-        self.read_input(&format!("  {} Enter {} (e.g., {}): ", "🎯".to_string(), target_type, example.dimmed()))
+        self.read_input(&format!(
+            "  {} Enter {} (e.g., {}): ",
+            "🎯".to_string(),
+            target_type,
+            example.dimmed()
+        ))
     }
 
     /// Prompt for scope name
@@ -474,7 +666,10 @@ impl Menu {
     /// Prompt for program name
     pub fn prompt_program_name(&self) -> Option<String> {
         println!();
-        let input = self.read_input(&format!("  {} Program name (optional, e.g., HackerOne-CompanyX): ", "🏷️".to_string()));
+        let input = self.read_input(&format!(
+            "  {} Program name (optional, e.g., HackerOne-CompanyX): ",
+            "🏷️".to_string()
+        ));
         if input.is_empty() {
             None
         } else {
@@ -485,7 +680,12 @@ impl Menu {
     /// Prompt for numeric value
     pub fn prompt_number(&self, prompt: &str, default: u32) -> u32 {
         println!();
-        let input = self.read_input(&format!("  {} {} [{}]: ", "🔢".to_string(), prompt, default));
+        let input = self.read_input(&format!(
+            "  {} {} [{}]: ",
+            "🔢".to_string(),
+            prompt,
+            default
+        ));
         match input.parse::<u32>() {
             Ok(v) => v,
             Err(_) => {
@@ -498,7 +698,12 @@ impl Menu {
     /// Prompt for string value with default
     pub fn prompt_string(&self, prompt: &str, default: &str) -> String {
         println!();
-        let input = self.read_input(&format!("  {} {} [{}]: ", "📝".to_string(), prompt, default.dimmed()));
+        let input = self.read_input(&format!(
+            "  {} {} [{}]: ",
+            "📝".to_string(),
+            prompt,
+            default.dimmed()
+        ));
         if input.is_empty() {
             default.to_string()
         } else {
@@ -531,27 +736,50 @@ impl Menu {
     }
 
     /// Display settings with values
-    pub fn display_settings(&self, rate_limit: u32, timeout: u64, user_agent: &str, db_path: &str, db_type: &str) {
+    pub fn display_settings(
+        &self,
+        rate_limit: u32,
+        timeout: u64,
+        user_agent: &str,
+        db_path: &str,
+        db_type: &str,
+    ) {
         println!();
         println!("  {}", "Current Configuration:".bold());
         println!("  {}", self.line().dimmed());
         println!();
         println!("    {:20} {}", "Database Type:".bold(), db_type.cyan());
         println!("    {:20} {}", "Database Path:".bold(), db_path.dimmed());
-        println!("    {:20} {} req/s", "Rate Limit:".bold(), rate_limit.to_string().cyan());
-        println!("    {:20} {} seconds", "Request Timeout:".bold(), timeout.to_string().cyan());
+        println!(
+            "    {:20} {} req/s",
+            "Rate Limit:".bold(),
+            rate_limit.to_string().cyan()
+        );
+        println!(
+            "    {:20} {} seconds",
+            "Request Timeout:".bold(),
+            timeout.to_string().cyan()
+        );
         println!("    {:20} {}", "User Agent:".bold(), user_agent.dimmed());
         println!();
         println!("  {}", self.line().dimmed());
     }
 
     /// Show scope details
-    pub fn display_scope_details(&self, name: &str, description: Option<&str>, program: Option<&str>, 
-                                  domains: &[String], wildcards: &[String], cidrs: &[String], urls: &[String]) {
+    pub fn display_scope_details(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        program: Option<&str>,
+        domains: &[String],
+        wildcards: &[String],
+        cidrs: &[String],
+        urls: &[String],
+    ) {
         println!();
         println!("  {}", format!("Scope: {}", name).bold());
         println!("  {}", self.line().dimmed());
-        
+
         if let Some(desc) = description {
             println!("  {} {}", "Description:".dimmed(), desc);
         }
@@ -559,7 +787,7 @@ impl Menu {
             println!("  {} {}", "Program:".dimmed(), prog.cyan());
         }
         println!();
-        
+
         if !domains.is_empty() {
             println!("  {} Domains ({}):", "🌐".to_string(), domains.len());
             for d in domains.iter().take(10) {
@@ -570,7 +798,7 @@ impl Menu {
             }
             println!();
         }
-        
+
         if !wildcards.is_empty() {
             println!("  {} Wildcards ({}):", "✳️".to_string(), wildcards.len());
             for w in wildcards.iter().take(10) {
@@ -581,7 +809,7 @@ impl Menu {
             }
             println!();
         }
-        
+
         if !cidrs.is_empty() {
             println!("  {} CIDR Ranges ({}):", "🔢".to_string(), cidrs.len());
             for c in cidrs.iter().take(10) {
@@ -592,7 +820,7 @@ impl Menu {
             }
             println!();
         }
-        
+
         if !urls.is_empty() {
             println!("  {} URLs ({}):", "🔗".to_string(), urls.len());
             for u in urls.iter().take(10) {
@@ -603,7 +831,7 @@ impl Menu {
             }
             println!();
         }
-        
+
         println!("  {}", self.line().dimmed());
     }
 
@@ -656,9 +884,15 @@ impl Menu {
         println!();
         println!("  {}", "Findings:".bold());
         println!("  {}", self.line().dimmed());
-        println!("  {:8} {:12} {:34} {}", "ID".bold(), "SEVERITY".bold(), "TITLE".bold(), "ASSET".bold());
+        println!(
+            "  {:8} {:12} {:34} {}",
+            "ID".bold(),
+            "SEVERITY".bold(),
+            "TITLE".bold(),
+            "ASSET".bold()
+        );
         println!("  {}", self.line().dimmed());
-        
+
         for (id, severity, finding_type, target) in findings {
             let severity_colored = match severity.as_str() {
                 "critical" => severity.red().bold().to_string(),
@@ -667,14 +901,20 @@ impl Menu {
                 "low" => severity.green().to_string(),
                 _ => severity.blue().to_string(),
             };
-            
+
             let short_id = Self::truncate_chars(id, 8);
             let short_title = Self::truncate_chars(finding_type, 34);
             let short_target = Self::truncate_chars(target, 22);
-            
-            println!("  {:8} {:12} {:34} {}", short_id.dimmed(), severity_colored, short_title, short_target);
+
+            println!(
+                "  {:8} {:12} {:34} {}",
+                short_id.dimmed(),
+                severity_colored,
+                short_title,
+                short_target
+            );
         }
-        
+
         println!("  {}", self.line().dimmed());
         println!();
     }
@@ -745,13 +985,7 @@ impl Menu {
             .collect();
         options.push("↩ Cancel".to_string());
 
-        let choice = Select::with_theme(&ColorfulTheme::default())
-            .with_prompt(prompt)
-            .items(&options)
-            .default(0)
-            .interact_opt()
-            .ok()
-            .flatten();
+        let choice = self.select_index_owned(prompt, &options, 0);
 
         match choice {
             Some(idx) if idx < runs.len() => Some(runs[idx].id.clone()),
@@ -826,7 +1060,7 @@ impl Menu {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -835,9 +1069,9 @@ impl Menu {
             match self.offensive_menu() {
                 OffensiveMenuOption::RunRecon => {
                     self.show_info("Starting reconnaissance wizard...");
-                    
+
                     let scopes = self.get_scope_list().await;
-                    
+
                     if let Some(scope_id) = self.prompt_scope(&scopes) {
                         let profile_str = self.prompt_profile();
                         let profile = match profile_str.as_str() {
@@ -857,8 +1091,9 @@ impl Menu {
                                             .clone()
                                             .unwrap_or_else(|| "menu-scan".to_string());
 
-                                        let policy_check =
-                                            policy.check_offensive_operation(&program_name, &scope).await?;
+                                        let policy_check = policy
+                                            .check_offensive_operation(&program_name, &scope)
+                                            .await?;
                                         if !policy_check.allowed {
                                             self.show_error("Operation blocked by policy");
                                             for reason in policy_check.reasons {
@@ -869,8 +1104,9 @@ impl Menu {
                                         }
 
                                         self.show_progress("Creating scan run");
-                                        let run_id =
-                                            storage.create_scan_run(&program_name, &scope.id, "offensive").await?;
+                                        let run_id = storage
+                                            .create_scan_run(&program_name, &scope.id, "offensive")
+                                            .await?;
                                         storage.update_scan_progress(&run_id, 5).await?;
                                         self.complete_progress();
                                         self.show_info(&format!("Scan ID: {}", run_id));
@@ -892,11 +1128,21 @@ impl Menu {
                                                 let progress_run = run_for_progress.clone();
                                                 tokio::spawn(async move {
                                                     let _ = progress_storage
-                                                        .update_scan_progress(&progress_run, percent as i32)
+                                                        .update_scan_progress(
+                                                            &progress_run,
+                                                            percent as i32,
+                                                        )
                                                         .await;
                                                 });
-                                                if percent >= last_reported.saturating_add(10) || percent == 100 {
-                                                    println!("  {} [{}%] {}", "→".cyan(), percent, stage);
+                                                if percent >= last_reported.saturating_add(10)
+                                                    || percent == 100
+                                                {
+                                                    println!(
+                                                        "  {} [{}%] {}",
+                                                        "→".cyan(),
+                                                        percent,
+                                                        stage
+                                                    );
                                                     last_reported = percent;
                                                 }
                                             })
@@ -908,13 +1154,28 @@ impl Menu {
                                                     .update_scan_progress(&run_id, 100)
                                                     .await;
                                                 let _ = storage
-                                                    .update_scan_findings_count(&run_id, summary.findings_count as i32)
+                                                    .update_scan_findings_count(
+                                                        &run_id,
+                                                        summary.findings_count as i32,
+                                                    )
                                                     .await;
                                                 self.show_success("Scan completed");
                                                 println!();
-                                                println!("  {} {}", "Assets discovered:".bold(), summary.assets_count);
-                                                println!("  {} {}", "Findings:".bold(), summary.findings_count);
-                                                println!("  {} {:.1}s", "Duration:".bold(), summary.duration_secs);
+                                                println!(
+                                                    "  {} {}",
+                                                    "Assets discovered:".bold(),
+                                                    summary.assets_count
+                                                );
+                                                println!(
+                                                    "  {} {}",
+                                                    "Findings:".bold(),
+                                                    summary.findings_count
+                                                );
+                                                println!(
+                                                    "  {} {:.1}s",
+                                                    "Duration:".bold(),
+                                                    summary.duration_secs
+                                                );
 
                                                 match storage
                                                     .list_findings(
@@ -976,18 +1237,22 @@ impl Menu {
                                                     )),
                                                 }
                                             }
-                                            Err(e) => self.show_error(&format!("Scan failed: {}", e)),
+                                            Err(e) => {
+                                                self.show_error(&format!("Scan failed: {}", e))
+                                            }
                                         }
                                     }
                                     Ok(None) => self.show_error("Selected scope not found"),
-                                    Err(e) => self.show_error(&format!("Failed to load scope: {}", e)),
+                                    Err(e) => {
+                                        self.show_error(&format!("Failed to load scope: {}", e))
+                                    }
                                 }
                             } else {
                                 self.show_error("Storage/config not initialized");
                             }
                         }
                     }
-                    
+
                     self.wait_enter();
                 }
                 OffensiveMenuOption::ViewStatus => {
@@ -997,7 +1262,9 @@ impl Menu {
                             self.show_info("No active scans");
                         } else {
                             self.show_scan_runs_table("Running Scans 📡", &running);
-                            if let Some(run_id) = self.prompt_scan_run("Inspect scan details", &running) {
+                            if let Some(run_id) =
+                                self.prompt_scan_run("Inspect scan details", &running)
+                            {
                                 match storage.get_scan_run(&run_id).await? {
                                     Some(run) => {
                                         println!("  {}", "Scan Details".bold());
@@ -1027,7 +1294,9 @@ impl Menu {
                             self.show_info("No running scans to stop");
                         } else {
                             self.show_scan_runs_table("Stop Scan ⏹", &running);
-                            if let Some(run_id) = self.prompt_scan_run("Select scan to stop", &running) {
+                            if let Some(run_id) =
+                                self.prompt_scan_run("Select scan to stop", &running)
+                            {
                                 if self.confirm(&format!("Stop scan {}?", run_id)) {
                                     storage.update_scan_status(&run_id, "stopped").await?;
                                     storage.update_scan_progress(&run_id, 100).await?;
@@ -1048,7 +1317,9 @@ impl Menu {
                             self.show_info("No completed scans found");
                         } else {
                             self.show_scan_runs_table("Scan Results 📋", &scans);
-                            if let Some(run_id) = self.prompt_scan_run("Select run to view findings", &scans) {
+                            if let Some(run_id) =
+                                self.prompt_scan_run("Select run to view findings", &scans)
+                            {
                                 if let Some(run) = storage.get_scan_run(&run_id).await? {
                                     let findings = storage
                                         .list_findings(
@@ -1098,14 +1369,12 @@ impl Menu {
             match self.defensive_menu() {
                 DefensiveMenuOption::StartMonitor => {
                     self.show_info("Starting defensive workflow...");
-                    
+
                     let scopes = self.get_scope_list().await;
-                    
+
                     if let Some(scope_id) = self.prompt_scope(&scopes) {
-                        let mode_options = [
-                            "One-time defensive scan",
-                            "Start continuous monitor daemon",
-                        ];
+                        let mode_options =
+                            ["One-time defensive scan", "Start continuous monitor daemon"];
                         let mode = self.select_index("Select operation mode", &mode_options, 0);
                         if self.confirm("Proceed with selected defensive operation?") {
                             if let (Some(storage), Some(config)) =
@@ -1114,9 +1383,12 @@ impl Menu {
                                 match storage.get_scope(&scope_id).await {
                                     Ok(Some(scope)) => {
                                         let policy = PolicyEngine::new(&config, &storage).await?;
-                                        let policy_check = policy.check_defensive_operation(&scope).await?;
+                                        let policy_check =
+                                            policy.check_defensive_operation(&scope).await?;
                                         if !policy_check.allowed {
-                                            self.show_error("Defensive operation blocked by policy");
+                                            self.show_error(
+                                                "Defensive operation blocked by policy",
+                                            );
                                             for reason in policy_check.reasons {
                                                 println!("  {} {}", "•".red(), reason);
                                             }
@@ -1125,16 +1397,35 @@ impl Menu {
                                         }
 
                                         if mode == 0 {
-                                            let scanner =
-                                                DefensiveScanner::new(scope, policy, storage.clone());
+                                            let scanner = DefensiveScanner::new(
+                                                scope,
+                                                policy,
+                                                storage.clone(),
+                                            );
                                             let result = scanner.scan(None).await?;
 
                                             self.show_success("Defensive scan completed");
                                             println!();
-                                            println!("  {} {}", "Assets checked:".bold(), result.assets_count);
-                                            println!("  {} {}", "Changes detected:".bold(), result.changes_count);
-                                            println!("  {} {}", "Exposures detected:".bold(), result.exposures_count);
-                                            println!("  {} {:.1}s", "Duration:".bold(), result.duration_secs);
+                                            println!(
+                                                "  {} {}",
+                                                "Assets checked:".bold(),
+                                                result.assets_count
+                                            );
+                                            println!(
+                                                "  {} {}",
+                                                "Changes detected:".bold(),
+                                                result.changes_count
+                                            );
+                                            println!(
+                                                "  {} {}",
+                                                "Exposures detected:".bold(),
+                                                result.exposures_count
+                                            );
+                                            println!(
+                                                "  {} {:.1}s",
+                                                "Duration:".bold(),
+                                                result.duration_secs
+                                            );
                                         } else {
                                             let orchestrator = DefensiveOrchestrator::new(
                                                 scope,
@@ -1150,18 +1441,22 @@ impl Menu {
                                                 "Continuous monitor started (ID: {})",
                                                 monitor_id
                                             ));
-                                            self.show_info("Use 'Stop Monitoring' to disable it later");
+                                            self.show_info(
+                                                "Use 'Stop Monitoring' to disable it later",
+                                            );
                                         }
                                     }
                                     Ok(None) => self.show_error("Selected scope not found"),
-                                    Err(e) => self.show_error(&format!("Failed to load scope: {}", e)),
+                                    Err(e) => {
+                                        self.show_error(&format!("Failed to load scope: {}", e))
+                                    }
                                 }
                             } else {
                                 self.show_error("Storage/config not initialized");
                             }
                         }
                     }
-                    
+
                     self.wait_enter();
                 }
                 DefensiveMenuOption::StopMonitor => {
@@ -1189,20 +1484,20 @@ impl Menu {
                                 .collect();
                             options.push("↩ Cancel".to_string());
 
-                            let selected = Select::with_theme(&ColorfulTheme::default())
-                                .with_prompt("Select monitor to stop")
-                                .items(&options)
-                                .default(0)
-                                .interact_opt()
-                                .ok()
-                                .flatten();
+                            let selected =
+                                self.select_index_owned("Select monitor to stop", &options, 0);
 
                             if let Some(idx) = selected {
                                 if idx < running.len() {
                                     let monitor_id = running[idx].id.clone();
                                     if self.confirm(&format!("Stop monitor {}?", monitor_id)) {
-                                        storage.update_monitor_status(&monitor_id, "stopped").await?;
-                                        self.show_success(&format!("Monitor {} stopped", monitor_id));
+                                        storage
+                                            .update_monitor_status(&monitor_id, "stopped")
+                                            .await?;
+                                        self.show_success(&format!(
+                                            "Monitor {} stopped",
+                                            monitor_id
+                                        ));
                                     }
                                 }
                             }
@@ -1256,11 +1551,7 @@ impl Menu {
                                     })
                                     .collect();
                                 self.show_findings_table(&rows);
-                                println!(
-                                    "  {} {}",
-                                    "Alert threshold:".bold(),
-                                    threshold.cyan()
-                                );
+                                println!("  {} {}", "Alert threshold:".bold(), threshold.cyan());
                             }
                         }
                     } else {
@@ -1277,20 +1568,25 @@ impl Menu {
                                 .as_ref()
                                 .map(|cfg| cfg.destination.clone())
                                 .unwrap_or_else(|| "stdout://console".to_string());
-                            let destination =
-                                self.prompt_string("Alert destination (email/webhook/slack URI)", &default_dest);
+                            let destination = self.prompt_string(
+                                "Alert destination (email/webhook/slack URI)",
+                                &default_dest,
+                            );
 
                             let levels = ["critical", "high", "medium", "low", "info"];
                             let default_idx = existing
                                 .as_ref()
                                 .and_then(|cfg| levels.iter().position(|l| *l == cfg.min_severity))
                                 .unwrap_or(2);
-                            let level_label: Vec<String> = levels
-                                .iter()
-                                .map(|l| format!("{} and above", l))
-                                .collect();
-                            let level_ref: Vec<&str> = level_label.iter().map(String::as_str).collect();
-                            let level_idx = self.select_index("Minimum alert severity", &level_ref, default_idx);
+                            let level_label: Vec<String> =
+                                levels.iter().map(|l| format!("{} and above", l)).collect();
+                            let level_ref: Vec<&str> =
+                                level_label.iter().map(String::as_str).collect();
+                            let level_idx = self.select_index(
+                                "Minimum alert severity",
+                                &level_ref,
+                                default_idx,
+                            );
                             let min_severity = levels[level_idx];
 
                             storage
@@ -1317,13 +1613,16 @@ impl Menu {
             match self.scope_menu() {
                 ScopeMenuOption::ImportScope => {
                     let file = self.prompt_file("Path to scope YAML file");
-                    
+
                     if !file.is_empty() {
                         if std::path::Path::new(&file).exists() {
                             if let Some(ref storage) = self.storage {
                                 match self.import_scope_from_file(&file, storage).await {
                                     Ok(scope_id) => {
-                                        self.show_success(&format!("Scope imported with ID: {}", scope_id));
+                                        self.show_success(&format!(
+                                            "Scope imported with ID: {}",
+                                            scope_id
+                                        ));
                                     }
                                     Err(e) => {
                                         self.show_error(&format!("Import failed: {}", e));
@@ -1336,23 +1635,23 @@ impl Menu {
                             self.show_error("File not found");
                         }
                     }
-                    
+
                     self.wait_enter();
                 }
                 ScopeMenuOption::CreateScope => {
                     self.print_banner();
                     self.print_header("Create New Scope 📋");
-                    
+
                     let name = self.prompt_scope_name();
                     if name.is_empty() {
                         self.show_error("Scope name is required");
                         self.wait_enter();
                         continue;
                     }
-                    
+
                     let description = self.prompt_scope_description();
                     let program = self.prompt_program_name();
-                    
+
                     // Create the scope
                     let scope_id = uuid::Uuid::new_v4().to_string();
                     let scope = Scope {
@@ -1369,11 +1668,14 @@ impl Menu {
                         cidr_count: 0,
                         wildcard_count: 0,
                     };
-                    
+
                     if let Some(ref storage) = self.storage {
                         match storage.save_scope(&scope).await {
                             Ok(_) => {
-                                self.show_success(&format!("Scope '{}' created with ID: {}", name, scope_id));
+                                self.show_success(&format!(
+                                    "Scope '{}' created with ID: {}",
+                                    name, scope_id
+                                ));
                                 self.show_info("Use 'Add Target' to add domains, CIDRs, etc.");
                             }
                             Err(e) => {
@@ -1383,20 +1685,20 @@ impl Menu {
                     } else {
                         self.show_error("Storage not initialized");
                     }
-                    
+
                     self.wait_enter();
                 }
                 ScopeMenuOption::AddTarget => {
                     self.print_banner();
                     self.print_header("Add Target to Scope 🎯");
-                    
+
                     // First, list and select scope
                     let scopes = self.get_scope_list().await;
-                    
+
                     if let Some(scope_id) = self.prompt_scope(&scopes) {
                         let target_type = self.prompt_target_type();
                         let target_value = self.prompt_target_value(&target_type);
-                        
+
                         if target_value.is_empty() {
                             self.show_error("Target value is required");
                             self.wait_enter();
@@ -1404,18 +1706,24 @@ impl Menu {
                         }
 
                         let is_valid = match target_type.as_str() {
-                            "wildcard" => target_value.starts_with("*.") && validate_domain(target_value.trim_start_matches("*."))?,
+                            "wildcard" => {
+                                target_value.starts_with("*.")
+                                    && validate_domain(target_value.trim_start_matches("*."))?
+                            }
                             "cidr" => validate_cidr(&target_value),
                             "url" => validate_url(&target_value),
                             "asn" => validate_asn(&target_value),
                             _ => validate_domain(&target_value)?,
                         };
                         if !is_valid {
-                            self.show_error(&format!("Invalid {} target format: {}", target_type, target_value));
+                            self.show_error(&format!(
+                                "Invalid {} target format: {}",
+                                target_type, target_value
+                            ));
                             self.wait_enter();
                             continue;
                         }
-                        
+
                         if let Some(ref storage) = self.storage {
                             match storage.get_scope(&scope_id).await {
                                 Ok(Some(mut scope)) => {
@@ -1429,7 +1737,9 @@ impl Menu {
                                     };
 
                                     if scope.items.iter().any(|i| {
-                                        i.in_scope && i.item_type == item_type && i.value.eq_ignore_ascii_case(&target_value)
+                                        i.in_scope
+                                            && i.item_type == item_type
+                                            && i.value.eq_ignore_ascii_case(&target_value)
                                     }) {
                                         self.show_warning("Target already exists in this scope");
                                         self.wait_enter();
@@ -1443,7 +1753,7 @@ impl Menu {
                                         notes: None,
                                         priority: 0,
                                     });
-                                    
+
                                     // Update counts
                                     match target_type.as_str() {
                                         "domain" => scope.domain_count += 1,
@@ -1452,10 +1762,13 @@ impl Menu {
                                         _ => {}
                                     }
                                     scope.updated_at = Utc::now();
-                                    
+
                                     match storage.save_scope(&scope).await {
                                         Ok(_) => {
-                                            self.show_success(&format!("Added {} '{}' to scope", target_type, target_value));
+                                            self.show_success(&format!(
+                                                "Added {} '{}' to scope",
+                                                target_type, target_value
+                                            ));
                                         }
                                         Err(e) => {
                                             self.show_error(&format!("Failed to save: {}", e));
@@ -1473,60 +1786,74 @@ impl Menu {
                             self.show_error("Storage not initialized");
                         }
                     }
-                    
+
                     self.wait_enter();
                 }
                 ScopeMenuOption::ListScopes => {
                     self.print_banner();
                     self.print_header("All Scopes 📃");
-                    
+
                     let scopes = self.get_scope_list().await;
-                    
+
                     if scopes.is_empty() {
                         self.show_info("No scopes found. Create or import a scope first.");
                     } else {
                         println!();
                         println!("  {:8} {:30}", "ID".bold(), "NAME".bold());
                         println!("  {}", self.line().dimmed());
-                        
+
                         for (id, name) in &scopes {
                             let short_id = Self::truncate_chars(id, 8);
                             println!("  {:8} {:30}", short_id.dimmed(), name);
                         }
-                        
+
                         println!();
                         println!("  {} {} scope(s) found", "Total:".bold(), scopes.len());
                     }
-                    
+
                     self.wait_enter();
                 }
                 ScopeMenuOption::ViewScope => {
                     self.print_banner();
                     self.print_header("View Scope Details 🔎");
-                    
+
                     let scopes = self.get_scope_list().await;
-                    
+
                     if let Some(scope_id) = self.prompt_scope(&scopes) {
                         if let Some(ref storage) = self.storage {
                             match storage.get_scope(&scope_id).await {
                                 Ok(Some(scope)) => {
-                                    let domains: Vec<String> = scope.items.iter()
-                                        .filter(|i| i.item_type == ScopeItemType::Domain && i.in_scope)
+                                    let domains: Vec<String> = scope
+                                        .items
+                                        .iter()
+                                        .filter(|i| {
+                                            i.item_type == ScopeItemType::Domain && i.in_scope
+                                        })
                                         .map(|i| i.value.clone())
                                         .collect();
-                                    let wildcards: Vec<String> = scope.items.iter()
-                                        .filter(|i| i.item_type == ScopeItemType::Wildcard && i.in_scope)
+                                    let wildcards: Vec<String> = scope
+                                        .items
+                                        .iter()
+                                        .filter(|i| {
+                                            i.item_type == ScopeItemType::Wildcard && i.in_scope
+                                        })
                                         .map(|i| i.value.clone())
                                         .collect();
-                                    let cidrs: Vec<String> = scope.items.iter()
-                                        .filter(|i| i.item_type == ScopeItemType::Cidr && i.in_scope)
+                                    let cidrs: Vec<String> = scope
+                                        .items
+                                        .iter()
+                                        .filter(|i| {
+                                            i.item_type == ScopeItemType::Cidr && i.in_scope
+                                        })
                                         .map(|i| i.value.clone())
                                         .collect();
-                                    let urls: Vec<String> = scope.items.iter()
+                                    let urls: Vec<String> = scope
+                                        .items
+                                        .iter()
                                         .filter(|i| i.item_type == ScopeItemType::Url && i.in_scope)
                                         .map(|i| i.value.clone())
                                         .collect();
-                                    
+
                                     self.display_scope_details(
                                         &scope.name,
                                         scope.description.as_deref(),
@@ -1546,28 +1873,29 @@ impl Menu {
                             }
                         }
                     }
-                    
+
                     self.wait_enter();
                 }
                 ScopeMenuOption::ValidateTarget => {
                     self.print_banner();
                     self.print_header("Validate Target ✓");
-                    
+
                     println!();
                     let target = self.read_input("  Enter target to validate: ");
-                    
+
                     if !target.is_empty() {
-                        let normalized_target = if target.starts_with("http://") || target.starts_with("https://") {
-                            url::Url::parse(&target)
-                                .ok()
-                                .and_then(|u| u.host_str().map(|h| h.to_string()))
-                                .unwrap_or_else(|| target.clone())
-                        } else {
-                            target.clone()
-                        };
+                        let normalized_target =
+                            if target.starts_with("http://") || target.starts_with("https://") {
+                                url::Url::parse(&target)
+                                    .ok()
+                                    .and_then(|u| u.host_str().map(|h| h.to_string()))
+                                    .unwrap_or_else(|| target.clone())
+                            } else {
+                                target.clone()
+                            };
 
                         self.show_info(&format!("Checking: {}", normalized_target));
-                        
+
                         let scopes = self.get_scope_list().await;
                         if scopes.is_empty() {
                             self.show_warning("No scopes configured for validation");
@@ -1577,28 +1905,34 @@ impl Menu {
                                 for (scope_id, scope_name) in &scopes {
                                     if let Ok(Some(scope)) = storage.get_scope(scope_id).await {
                                         if scope.is_in_scope(&normalized_target).in_scope {
-                                            self.show_success(&format!("✓ IN SCOPE: '{}' in scope '{}'", normalized_target, scope_name));
+                                            self.show_success(&format!(
+                                                "✓ IN SCOPE: '{}' in scope '{}'",
+                                                normalized_target, scope_name
+                                            ));
                                             found_in_scope = true;
                                             break;
                                         }
                                     }
                                 }
                             }
-                            
+
                             if !found_in_scope {
-                                self.show_warning(&format!("✗ OUT OF SCOPE: '{}' not found in any scope", normalized_target));
+                                self.show_warning(&format!(
+                                    "✗ OUT OF SCOPE: '{}' not found in any scope",
+                                    normalized_target
+                                ));
                             }
                         }
                     }
-                    
+
                     self.wait_enter();
                 }
                 ScopeMenuOption::DeleteScope => {
                     self.print_banner();
                     self.print_header("Delete Scope 🗑");
-                    
+
                     let scopes = self.get_scope_list().await;
-                    
+
                     if scopes.is_empty() {
                         self.show_warning("No scopes to delete");
                     } else if let Some(scope_id) = self.prompt_scope(&scopes) {
@@ -1615,7 +1949,7 @@ impl Menu {
                             }
                         }
                     }
-                    
+
                     self.wait_enter();
                 }
                 ScopeMenuOption::Back => break,
@@ -1628,7 +1962,10 @@ impl Menu {
     async fn get_scope_list(&self) -> Vec<(String, String)> {
         if let Some(ref storage) = self.storage {
             match storage.list_scopes(None).await {
-                Ok(scopes) => scopes.iter().map(|s| (s.id.clone(), s.name.clone())).collect(),
+                Ok(scopes) => scopes
+                    .iter()
+                    .map(|s| (s.id.clone(), s.name.clone()))
+                    .collect(),
                 Err(_) => vec![],
             }
         } else {
@@ -1644,37 +1981,26 @@ impl Menu {
         let engine = ScopeEngine::new();
         let validation = engine.validate_definition(&def)?;
         if !validation.is_valid {
-            anyhow::bail!(
-                "Invalid scope definition: {}",
-                validation.errors.join(", ")
-            );
+            anyhow::bail!("Invalid scope definition: {}", validation.errors.join(", "));
         }
 
         let scope = engine.create_scope(def, None)?;
         let scope_id = scope.id.clone();
-        
+
         storage.save_scope(&scope).await?;
-        
+
         Ok(scope_id)
     }
 
     async fn run_findings_view(&mut self) -> Result<()> {
         self.print_banner();
         self.print_header("View Findings 🔍");
-        
+
         let severity = self.prompt_severity();
 
         if let Some(ref storage) = self.storage {
             match storage
-                .list_findings(
-                    severity,
-                    None,
-                    None,
-                    None,
-                    None,
-                    100,
-                    "severity",
-                )
+                .list_findings(severity, None, None, None, None, 100, "severity")
                 .await
             {
                 Ok(findings) => {
@@ -1693,7 +2019,7 @@ impl Menu {
         } else {
             self.show_error("Storage not initialized");
         }
-        
+
         self.wait_enter();
         Ok(())
     }
@@ -1701,10 +2027,10 @@ impl Menu {
     async fn run_report_generation(&mut self) -> Result<()> {
         self.print_banner();
         self.print_header("Generate Reports 📊");
-        
+
         let format = self.prompt_report_format();
         let output = self.prompt_output_path(&format);
-        
+
         if self.confirm(&format!("Generate {} report to {}?", format, output)) {
             if let Some(ref storage) = self.storage {
                 match storage
@@ -1749,7 +2075,7 @@ impl Menu {
                 self.show_error("Storage not initialized");
             }
         }
-        
+
         self.wait_enter();
         Ok(())
     }
@@ -1765,7 +2091,12 @@ impl Menu {
                         self.show_info("No assets discovered yet. Run a scan first.");
                     } else {
                         println!();
-                        println!("  {:10} {:14} {}", "ID".bold(), "TYPE".bold(), "VALUE".bold());
+                        println!(
+                            "  {:10} {:14} {}",
+                            "ID".bold(),
+                            "TYPE".bold(),
+                            "VALUE".bold()
+                        );
                         println!("  {}", self.line().dimmed());
                         for asset in assets {
                             let short_id = Self::truncate_chars(&asset.id, 7);
@@ -1783,7 +2114,7 @@ impl Menu {
         } else {
             self.show_error("Storage not initialized");
         }
-        
+
         self.wait_enter();
         Ok(())
     }
@@ -1794,7 +2125,7 @@ impl Menu {
                 SettingsMenuOption::ViewSettings => {
                     self.print_banner();
                     self.print_header("Current Settings 👁");
-                    
+
                     if let Some(ref config) = self.config {
                         self.display_settings(
                             config.rate_limit.requests_per_second,
@@ -1817,20 +2148,20 @@ impl Menu {
                             DEFAULT_MENU_DB_TYPE,
                         );
                     }
-                    
+
                     self.wait_enter();
                 }
                 SettingsMenuOption::EditRateLimit => {
                     self.print_banner();
                     self.print_header("Edit Rate Limit ⏱");
-                    
+
                     let current = self
                         .config
                         .as_ref()
                         .map(|c| c.rate_limit.requests_per_second)
                         .unwrap_or(DEFAULT_MENU_RPS);
                     let new_val = self.prompt_number("Requests per second", current);
-                    
+
                     if new_val != current {
                         match self
                             .update_config(|config| {
@@ -1838,26 +2169,27 @@ impl Menu {
                             })
                             .await
                         {
-                            Ok(_) => self.show_success(&format!("Rate limit updated to {} req/s", new_val)),
+                            Ok(_) => self
+                                .show_success(&format!("Rate limit updated to {} req/s", new_val)),
                             Err(e) => self.show_error(&format!("Failed to save: {}", e)),
                         }
                     } else {
                         self.show_info("No changes made");
                     }
-                    
+
                     self.wait_enter();
                 }
                 SettingsMenuOption::EditTimeout => {
                     self.print_banner();
                     self.print_header("Edit Request Timeout ⌛");
-                    
+
                     let current = self
                         .config
                         .as_ref()
                         .map(|c| c.request_timeout_secs as u32)
                         .unwrap_or(DEFAULT_MENU_TIMEOUT_SECS);
                     let new_val = self.prompt_number("Timeout in seconds", current);
-                    
+
                     if new_val != current {
                         match self
                             .update_config(|config| {
@@ -1865,26 +2197,27 @@ impl Menu {
                             })
                             .await
                         {
-                            Ok(_) => self.show_success(&format!("Timeout updated to {} seconds", new_val)),
+                            Ok(_) => self
+                                .show_success(&format!("Timeout updated to {} seconds", new_val)),
                             Err(e) => self.show_error(&format!("Failed to save: {}", e)),
                         }
                     } else {
                         self.show_info("No changes made");
                     }
-                    
+
                     self.wait_enter();
                 }
                 SettingsMenuOption::EditUserAgent => {
                     self.print_banner();
                     self.print_header("Edit User Agent 🤖");
-                    
+
                     let current = self
                         .config
                         .as_ref()
                         .map(|c| c.user_agent.clone())
                         .unwrap_or_else(|| Config::default().user_agent);
                     let new_val = self.prompt_string("User agent string", &current);
-                    
+
                     if new_val != current {
                         match self
                             .update_config(|config| {
@@ -1892,22 +2225,21 @@ impl Menu {
                             })
                             .await
                         {
-                            Ok(_) => self.show_success(&format!("User agent updated to '{}'", new_val)),
+                            Ok(_) => {
+                                self.show_success(&format!("User agent updated to '{}'", new_val))
+                            }
                             Err(e) => self.show_error(&format!("Failed to save: {}", e)),
                         }
                     } else {
                         self.show_info("No changes made");
                     }
-                    
+
                     self.wait_enter();
                 }
                 SettingsMenuOption::EditDatabase => {
                     self.print_banner();
                     self.print_header("Database Settings 💾");
-                    let backend_options = [
-                        "SQLite (local file)",
-                        "PostgreSQL (remote server)",
-                    ];
+                    let backend_options = ["SQLite (local file)", "PostgreSQL (remote server)"];
                     match self.select_index("Select database backend", &backend_options, 0) {
                         1 => {
                             println!();
@@ -1922,7 +2254,9 @@ impl Menu {
                                 {
                                     Ok(_) => {
                                         self.show_success("Database configured to PostgreSQL");
-                                        self.show_warning("Restart AegisOSINT for changes to take effect");
+                                        self.show_warning(
+                                            "Restart AegisOSINT for changes to take effect",
+                                        );
                                     }
                                     Err(e) => self.show_error(&format!("Failed to save: {}", e)),
                                 }
@@ -1936,12 +2270,12 @@ impl Menu {
                                 .unwrap_or_else(|| {
                                     data_dir()
                                         .map(|p| p.join("aegis.db").to_string_lossy().to_string())
-                                        .unwrap_or_else(|_| "~/.local/share/aegis-osint/aegis.db".to_string())
+                                        .unwrap_or_else(|_| {
+                                            "~/.local/share/aegis-osint/aegis.db".to_string()
+                                        })
                                 });
-                            let sqlite_path = self.prompt_string(
-                                "SQLite database file path",
-                                &default_sqlite,
-                            );
+                            let sqlite_path =
+                                self.prompt_string("SQLite database file path", &default_sqlite);
                             match self
                                 .update_config(|config| {
                                     config.database.db_type = "sqlite".to_string();
@@ -1951,26 +2285,29 @@ impl Menu {
                             {
                                 Ok(_) => {
                                     self.show_success("Database configured to SQLite");
-                                    self.show_warning("Restart AegisOSINT for changes to take effect");
+                                    self.show_warning(
+                                        "Restart AegisOSINT for changes to take effect",
+                                    );
                                 }
                                 Err(e) => self.show_error(&format!("Failed to save: {}", e)),
                             }
                         }
                     }
-                    
+
                     self.wait_enter();
                 }
                 SettingsMenuOption::ResetDefaults => {
                     self.print_banner();
                     self.print_header("Reset to Defaults 🔄");
-                    
+
                     if self.confirm("Reset all settings to defaults?") {
                         match self
                             .update_config(|config| {
                                 config.rate_limit.requests_per_second = 10;
                                 config.rate_limit.burst_size = 20;
                                 config.request_timeout_secs = 30;
-                                config.user_agent = format!("AegisOSINT/{}", env!("CARGO_PKG_VERSION"));
+                                config.user_agent =
+                                    format!("AegisOSINT/{}", env!("CARGO_PKG_VERSION"));
                                 config.verbose = false;
                             })
                             .await
@@ -1981,7 +2318,7 @@ impl Menu {
                     } else {
                         self.show_info("Reset cancelled");
                     }
-                    
+
                     self.wait_enter();
                 }
                 SettingsMenuOption::Back => break,
@@ -1994,5 +2331,55 @@ impl Menu {
 impl Default for Menu {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_navigation_wrap_forward() {
+        assert_eq!(Menu::next_index(0, 4), 1);
+        assert_eq!(Menu::next_index(3, 4), 0);
+        assert_eq!(Menu::next_index(0, 0), 0);
+    }
+
+    #[test]
+    fn test_navigation_wrap_backward() {
+        assert_eq!(Menu::prev_index(1, 4), 0);
+        assert_eq!(Menu::prev_index(0, 4), 3);
+        assert_eq!(Menu::prev_index(0, 0), 0);
+    }
+
+    #[test]
+    fn test_key_mapping() {
+        assert_eq!(Menu::map_navigation_key(KeyCode::Up), NavigationKey::Up);
+        assert_eq!(
+            Menu::map_navigation_key(KeyCode::Char('j')),
+            NavigationKey::Down
+        );
+        assert_eq!(
+            Menu::map_navigation_key(KeyCode::Enter),
+            NavigationKey::Confirm
+        );
+        assert_eq!(
+            Menu::map_navigation_key(KeyCode::Esc),
+            NavigationKey::Cancel
+        );
+        assert_eq!(Menu::map_navigation_key(KeyCode::Left), NavigationKey::None);
+    }
+
+    #[test]
+    fn test_prompt_scope_cancel_option_present() {
+        let menu = Menu::new();
+        let scopes = vec![("scope-1".to_string(), "Demo Scope".to_string())];
+        let mut options: Vec<String> = scopes
+            .iter()
+            .map(|(id, name)| format!("{} ({})", name, id))
+            .collect();
+        options.push("↩ Cancel".to_string());
+        assert_eq!(options.last().map(String::as_str), Some("↩ Cancel"));
+        assert!(menu.width > 0);
     }
 }
