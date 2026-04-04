@@ -122,23 +122,20 @@ impl CloudExposureEngine {
                 storage_name
             );
 
-            match self.client.get(&azure_url).send().await {
-                Ok(response) => {
-                    let status = response.status();
+            if let Ok(response) = self.client.get(&azure_url).send().await {
+                let status = response.status();
 
-                    if status.is_success() {
-                        findings.push(CloudExposureFinding {
-                            provider: "azure".to_string(),
-                            resource_type: "blob-storage".to_string(),
-                            resource_name: storage_name.clone(),
-                            url: azure_url,
-                            exposure_type: "public-listing".to_string(),
-                            severity: "high".to_string(),
-                            evidence: format!("HTTP {} - storage allows public listing", status),
-                        });
-                    }
+                if status.is_success() {
+                    findings.push(CloudExposureFinding {
+                        provider: "azure".to_string(),
+                        resource_type: "blob-storage".to_string(),
+                        resource_name: storage_name.clone(),
+                        url: azure_url,
+                        exposure_type: "public-listing".to_string(),
+                        severity: "high".to_string(),
+                        evidence: format!("HTTP {} - storage allows public listing", status),
+                    });
                 }
-                Err(_) => {}
             }
         }
 
@@ -165,35 +162,29 @@ impl CloudExposureEngine {
         for bucket_name in bucket_patterns {
             self.policy.wait_for_rate_limit().await;
 
-            let gcp_url = format!(
-                "https://storage.googleapis.com/{}",
-                bucket_name
-            );
+            let gcp_url = format!("https://storage.googleapis.com/{}", bucket_name);
 
-            match self.client.head(&gcp_url).send().await {
-                Ok(response) => {
-                    let status = response.status();
+            if let Ok(response) = self.client.head(&gcp_url).send().await {
+                let status = response.status();
 
-                    if status.is_success() || status.as_u16() == 403 {
-                        let severity = if status.is_success() { "high" } else { "info" };
-                        let exposure_type = if status.is_success() {
-                            "public-access"
-                        } else {
-                            "bucket-exists"
-                        };
+                if status.is_success() || status.as_u16() == 403 {
+                    let severity = if status.is_success() { "high" } else { "info" };
+                    let exposure_type = if status.is_success() {
+                        "public-access"
+                    } else {
+                        "bucket-exists"
+                    };
 
-                        findings.push(CloudExposureFinding {
-                            provider: "gcp".to_string(),
-                            resource_type: "gcs-bucket".to_string(),
-                            resource_name: bucket_name.clone(),
-                            url: gcp_url,
-                            exposure_type: exposure_type.to_string(),
-                            severity: severity.to_string(),
-                            evidence: format!("HTTP {}", status),
-                        });
-                    }
+                    findings.push(CloudExposureFinding {
+                        provider: "gcp".to_string(),
+                        resource_type: "gcs-bucket".to_string(),
+                        resource_name: bucket_name.clone(),
+                        url: gcp_url,
+                        exposure_type: exposure_type.to_string(),
+                        severity: severity.to_string(),
+                        evidence: format!("HTTP {}", status),
+                    });
                 }
-                Err(_) => {}
             }
         }
 
@@ -213,12 +204,10 @@ impl CloudExposureEngine {
         self.policy.wait_for_rate_limit().await;
 
         // Check for organization repos
-        let github_url = format!(
-            "https://api.github.com/orgs/{}/repos?type=public",
-            org_name
-        );
+        let github_url = format!("https://api.github.com/orgs/{}/repos?type=public", org_name);
 
-        match self.client
+        match self
+            .client
             .get(&github_url)
             .header("User-Agent", "AegisOSINT")
             .send()
@@ -228,7 +217,8 @@ impl CloudExposureEngine {
                 if response.status().is_success() {
                     if let Ok(repos) = response.json::<Vec<GitHubRepo>>().await {
                         for repo in repos {
-                            let risk_reason = detect_repo_risk(&repo.name, repo.description.as_deref());
+                            let risk_reason =
+                                detect_repo_risk(&repo.name, repo.description.as_deref());
                             let severity = if risk_reason.is_some() {
                                 "medium".to_string()
                             } else {
@@ -303,7 +293,10 @@ impl CloudExposureEngine {
 
     async fn save_repo_finding(&self, finding: &RepoExposureFinding) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        let title = format!("Potential sensitive public repo: {}/{}", finding.org, finding.repo_name);
+        let title = format!(
+            "Potential sensitive public repo: {}/{}",
+            finding.org, finding.repo_name
+        );
         let description = finding
             .risk_reason
             .clone()
@@ -402,7 +395,10 @@ fn detect_repo_risk(name: &str, description: Option<&str>) -> Option<String> {
     ];
     for indicator in indicators {
         if content.contains(indicator) {
-            return Some(format!("Repository metadata contains sensitive keyword '{}'", indicator));
+            return Some(format!(
+                "Repository metadata contains sensitive keyword '{}'",
+                indicator
+            ));
         }
     }
     None

@@ -163,6 +163,37 @@ pub struct Storage {
     db_type: String,
 }
 
+type ScanRunRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    i32,
+    i32,
+    String,
+    Option<String>,
+);
+type AssetRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+);
+type MonitorRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    i32,
+);
+
 impl Storage {
     /// Get a reference to the connection pool
     pub fn pool(&self) -> &SqlitePool {
@@ -534,8 +565,7 @@ impl Storage {
 
     /// Get a scan run
     pub async fn get_scan_run(&self, id: &str) -> Result<Option<ScanRunInfo>> {
-        let row: Option<(String, String, String, String, String, i32, i32, String, Option<String>)> =
-            sqlx::query_as(
+        let row: Option<ScanRunRow> = sqlx::query_as(
                 r#"
                 SELECT id, program, scope_id, run_type, status, progress, findings_count, started_at, ended_at
                 FROM scan_runs WHERE id = ?
@@ -634,17 +664,7 @@ impl Storage {
             "#
         };
 
-        let rows: Vec<(
-            String,
-            String,
-            String,
-            String,
-            String,
-            i32,
-            i32,
-            String,
-            Option<String>,
-        )> = if let Some(s) = status {
+        let rows: Vec<ScanRunRow> = if let Some(s) = status {
             sqlx::query_as(query)
                 .bind(s)
                 .bind(limit as i64)
@@ -843,8 +863,7 @@ impl Storage {
     pub async fn list_findings(
         &self,
         severity: Option<String>,
-        scope: Option<&str>,
-        run: Option<&str>,
+        context: FindingContext<'_>,
         status: Option<String>,
         asset: Option<&str>,
         limit: usize,
@@ -859,11 +878,11 @@ impl Storage {
             query.push_str(" AND severity = ?");
             params.push(s.clone());
         }
-        if let Some(s) = scope {
+        if let Some(s) = context.scope {
             query.push_str(" AND scope_id = ?");
             params.push(s.to_string());
         }
-        if let Some(r) = run {
+        if let Some(r) = context.run {
             query.push_str(" AND run_id = ?");
             params.push(r.to_string());
         }
@@ -998,7 +1017,7 @@ impl Storage {
         let metadata = asset
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m))
+            .map(serde_json::to_string)
             .transpose()?;
 
         sqlx::query(
@@ -1027,8 +1046,7 @@ impl Storage {
 
     /// Get an asset
     pub async fn get_asset(&self, id: &str) -> Result<Option<Asset>> {
-        let row: Option<(String, String, String, String, String, Option<String>, String, String)> =
-            sqlx::query_as(
+        let row: Option<AssetRow> = sqlx::query_as(
                 "SELECT id, scope_id, asset_type, value, tags, metadata, first_seen, last_seen FROM assets WHERE id = ?",
             )
             .bind(id)
@@ -1320,15 +1338,7 @@ impl Storage {
             }
         };
 
-        let rows: Vec<(
-            String,
-            String,
-            String,
-            String,
-            Option<String>,
-            Option<String>,
-            i32,
-        )> = match scope {
+        let rows: Vec<MonitorRow> = match scope {
             Some(s) => {
                 sqlx::query_as(query)
                     .bind(s)
@@ -1559,7 +1569,7 @@ impl Storage {
         let metadata = entry
             .metadata
             .as_ref()
-            .map(|m| serde_json::to_string(m))
+            .map(serde_json::to_string)
             .transpose()?;
 
         sqlx::query(

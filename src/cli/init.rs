@@ -186,10 +186,7 @@ notes: |
   - Maximum 10 requests per second
 "#;
 
-            std::fs::write(
-                aegis_dir.join("scopes/example-scope.yaml"),
-                example_scope,
-            )?;
+            std::fs::write(aegis_dir.join("scopes/example-scope.yaml"), example_scope)?;
             println!("  {} Created example scope file", "✓".green());
         }
 
@@ -218,10 +215,7 @@ notes: |
                 ".aegis/scopes/example-scope.yaml".cyan()
             );
         } else {
-            println!(
-                "  2. Create a scope file in {}",
-                ".aegis/scopes/".cyan()
-            );
+            println!("  2. Create a scope file in {}", ".aegis/scopes/".cyan());
         }
         println!(
             "  3. Import the scope: {}",

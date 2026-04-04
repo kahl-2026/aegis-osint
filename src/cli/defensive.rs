@@ -1,7 +1,7 @@
 //! Defensive OSINT commands
 
 use crate::policy::PolicyEngine;
-use crate::storage::Storage;
+use crate::storage::{FindingContext, Storage};
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use colored::Colorize;
@@ -118,10 +118,7 @@ impl DefensiveCommand {
     ) -> Result<u8> {
         use crate::defensive::DefensiveOrchestrator;
 
-        println!(
-            "{}",
-            "AegisOSINT - Defensive Monitoring".cyan().bold()
-        );
+        println!("{}", "AegisOSINT - Defensive Monitoring".cyan().bold());
         println!();
 
         // Look up scope
@@ -153,17 +150,29 @@ impl DefensiveCommand {
         println!(
             "  {} {}",
             "Drift Detection:".bold(),
-            if args.drift_detection { "enabled".green() } else { "disabled".yellow() }
+            if args.drift_detection {
+                "enabled".green()
+            } else {
+                "disabled".yellow()
+            }
         );
         println!(
             "  {} {}",
             "Brand Monitoring:".bold(),
-            if args.brand_monitoring { "enabled".green() } else { "disabled".yellow() }
+            if args.brand_monitoring {
+                "enabled".green()
+            } else {
+                "disabled".yellow()
+            }
         );
         println!(
             "  {} {}",
             "Leak Monitoring:".bold(),
-            if args.leak_monitoring { "enabled".green() } else { "disabled".yellow() }
+            if args.leak_monitoring {
+                "enabled".green()
+            } else {
+                "disabled".yellow()
+            }
         );
         println!();
 
@@ -185,7 +194,9 @@ impl DefensiveCommand {
 
             println!(
                 "{}",
-                format!("✓ Monitoring started (ID: {})", monitor_id).green().bold()
+                format!("✓ Monitoring started (ID: {})", monitor_id)
+                    .green()
+                    .bold()
             );
             println!();
             println!(
@@ -250,9 +261,17 @@ impl DefensiveCommand {
         println!("{}", "Defensive Scan Summary".bold().underline());
         println!("{}", "─".repeat(60).dimmed());
         println!("  {:24} {}", "Scope ID".bold(), args.scope.cyan());
-        println!("  {:24} {}", "Assets inventoried".bold(), results.assets_count);
+        println!(
+            "  {:24} {}",
+            "Assets inventoried".bold(),
+            results.assets_count
+        );
         println!("  {:24} {}", "Drift changes".bold(), results.changes_count);
-        println!("  {:24} {}", "Open exposures".bold(), results.exposures_count);
+        println!(
+            "  {:24} {}",
+            "Open exposures".bold(),
+            results.exposures_count
+        );
         println!("  {:24} {:.2}s", "Duration".bold(), results.duration_secs);
         println!("{}", "─".repeat(60).dimmed());
 
@@ -261,8 +280,10 @@ impl DefensiveCommand {
             if let Ok(recent) = storage
                 .list_findings(
                     None,
-                    Some(&args.scope),
-                    None,
+                    FindingContext {
+                        scope: Some(&args.scope),
+                        run: None,
+                    },
                     Some("open".to_string()),
                     None,
                     10,
@@ -297,7 +318,11 @@ impl DefensiveCommand {
             );
             println!(
                 "Asset drift diff: {}",
-                format!("aegis assets diff --scope {} --since 2024-01-01", args.scope).cyan()
+                format!(
+                    "aegis assets diff --scope {} --since 2024-01-01",
+                    args.scope
+                )
+                .cyan()
             );
         }
 
@@ -358,10 +383,7 @@ impl DefensiveCommand {
                     args.min_severity.as_deref().unwrap_or("medium"),
                 )
                 .await?;
-            println!(
-                "{}",
-                "✓ Alert configuration updated".green().bold()
-            );
+            println!("{}", "✓ Alert configuration updated".green().bold());
         } else {
             println!("{}", "Specify --destination to configure alerts, or --show to view current configuration".yellow());
         }
@@ -370,7 +392,9 @@ impl DefensiveCommand {
     }
 
     async fn handle_summary(args: &DefensiveSummaryArgs, storage: &Storage) -> Result<u8> {
-        let summary = storage.get_attack_surface_summary(&args.scope, &args.period).await?;
+        let summary = storage
+            .get_attack_surface_summary(&args.scope, &args.period)
+            .await?;
 
         println!(
             "{}",
@@ -421,11 +445,7 @@ impl DefensiveCommand {
             "Medium findings:".bold(),
             summary.medium_findings
         );
-        println!(
-            "  {} {}",
-            "Low findings:".bold(),
-            summary.low_findings
-        );
+        println!("  {} {}", "Low findings:".bold(), summary.low_findings);
 
         Ok(0)
     }

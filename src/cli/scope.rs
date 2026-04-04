@@ -203,12 +203,7 @@ impl ScopeCommand {
                 "inactive".yellow()
             };
 
-            println!(
-                "  {} {} [{}]",
-                scope.id.cyan().bold(),
-                scope.name,
-                status
-            );
+            println!("  {} {} [{}]", scope.id.cyan().bold(), scope.name, status);
             println!(
                 "    {} domains, {} CIDRs, {} wildcards",
                 scope.domain_count, scope.cidr_count, scope.wildcard_count
@@ -233,7 +228,11 @@ impl ScopeCommand {
                 println!(
                     "  {} {}",
                     "Status:".bold(),
-                    if scope.active { "Active".green() } else { "Inactive".yellow() }
+                    if scope.active {
+                        "Active".green()
+                    } else {
+                        "Inactive".yellow()
+                    }
                 );
                 if let Some(program) = &scope.program {
                     println!("  {} {}", "Program:".bold(), program);
@@ -251,8 +250,7 @@ impl ScopeCommand {
                     }
                     println!();
 
-                    let out_of_scope: Vec<_> =
-                        scope.items.iter().filter(|i| !i.in_scope).collect();
+                    let out_of_scope: Vec<_> = scope.items.iter().filter(|i| !i.in_scope).collect();
                     if !out_of_scope.is_empty() {
                         println!("{}", "Out-of-Scope Items:".bold().red());
                         for item in out_of_scope {
@@ -272,10 +270,7 @@ impl ScopeCommand {
                 Ok(0)
             }
             None => {
-                println!(
-                    "{}",
-                    format!("Scope '{}' not found.", args.id).red()
-                );
+                println!("{}", format!("Scope '{}' not found.", args.id).red());
                 Ok(8)
             }
         }
@@ -344,10 +339,7 @@ impl ScopeCommand {
                 Ok(0)
             }
             None => {
-                println!(
-                    "{}",
-                    format!("Scope '{}' not found.", args.id).red()
-                );
+                println!("{}", format!("Scope '{}' not found.", args.id).red());
                 Ok(8)
             }
         }
@@ -362,15 +354,14 @@ impl ScopeCommand {
                 tokio::fs::write(&args.output, yaml).await?;
                 println!(
                     "{}",
-                    format!("✓ Scope exported to {:?}", args.output).green().bold()
+                    format!("✓ Scope exported to {:?}", args.output)
+                        .green()
+                        .bold()
                 );
                 Ok(0)
             }
             None => {
-                println!(
-                    "{}",
-                    format!("Scope '{}' not found.", args.id).red()
-                );
+                println!("{}", format!("Scope '{}' not found.", args.id).red());
                 Ok(8)
             }
         }

@@ -395,14 +395,11 @@ impl Scope {
     /// Check if a target matches a scope item
     fn matches_item(target: &str, item: &ScopeItem) -> bool {
         match item.item_type {
-            ScopeItemType::Domain => {
-                target.eq_ignore_ascii_case(&item.value)
-            }
+            ScopeItemType::Domain => target.eq_ignore_ascii_case(&item.value),
             ScopeItemType::Wildcard => {
                 // *.example.com matches any.example.com, sub.any.example.com, etc.
                 if let Some(base) = item.value.strip_prefix("*.") {
-                    target.ends_with(&format!(".{}", base))
-                        || target.eq_ignore_ascii_case(base)
+                    target.ends_with(&format!(".{}", base)) || target.eq_ignore_ascii_case(base)
                 } else {
                     false
                 }
@@ -420,15 +417,9 @@ impl Scope {
                 // ASN matching would require lookup
                 item.value.eq_ignore_ascii_case(target)
             }
-            ScopeItemType::Url => {
-                target.starts_with(&item.value)
-            }
-            ScopeItemType::Repository => {
-                target.eq_ignore_ascii_case(&item.value)
-            }
-            ScopeItemType::Org => {
-                target.eq_ignore_ascii_case(&item.value)
-            }
+            ScopeItemType::Url => target.starts_with(&item.value),
+            ScopeItemType::Repository => target.eq_ignore_ascii_case(&item.value),
+            ScopeItemType::Org => target.eq_ignore_ascii_case(&item.value),
         }
     }
 }

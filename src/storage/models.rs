@@ -72,6 +72,13 @@ pub struct FindingSummary {
     pub status: Option<String>,
 }
 
+/// Context selector for finding queries
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FindingContext<'a> {
+    pub scope: Option<&'a str>,
+    pub run: Option<&'a str>,
+}
+
 /// Remediation queue item
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemediationItem {

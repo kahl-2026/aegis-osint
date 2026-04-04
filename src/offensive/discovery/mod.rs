@@ -26,7 +26,8 @@ pub struct DiscoveryEngine {
 impl DiscoveryEngine {
     /// Create a new discovery engine
     pub async fn new(scope: Scope, policy: PolicyEngine, storage: Storage) -> Result<Self> {
-        let resolver = TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), ResolverOpts::default());
+        let resolver =
+            TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), ResolverOpts::default());
 
         Ok(Self {
             scope,
@@ -41,7 +42,11 @@ impl DiscoveryEngine {
         // Validate scope
         let check = self.policy.check_target(base_domain, &self.scope).await?;
         if !check.allowed {
-            tracing::warn!("CT log discovery blocked for {}: {}", base_domain, check.reasons.join(", "));
+            tracing::warn!(
+                "CT log discovery blocked for {}: {}",
+                base_domain,
+                check.reasons.join(", ")
+            );
             return Ok(vec![]);
         }
 
@@ -51,10 +56,7 @@ impl DiscoveryEngine {
         let mut discovered = Vec::new();
 
         // Query crt.sh API (Certificate Transparency)
-        let url = format!(
-            "https://crt.sh/?q=%.{}&output=json",
-            base_domain
-        );
+        let url = format!("https://crt.sh/?q=%.{}&output=json", base_domain);
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -92,7 +94,11 @@ impl DiscoveryEngine {
             self.save_asset(subdomain, "subdomain").await?;
         }
 
-        tracing::info!("CT logs: discovered {} subdomains for {}", discovered.len(), base_domain);
+        tracing::info!(
+            "CT logs: discovered {} subdomains for {}",
+            discovered.len(),
+            base_domain
+        );
         Ok(discovered)
     }
 

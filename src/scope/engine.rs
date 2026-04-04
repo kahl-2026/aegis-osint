@@ -91,7 +91,10 @@ impl ScopeEngine {
                 errors.push(format!("Invalid CIDR notation: {}", cidr));
             }
             if self.is_blocked_cidr(cidr) {
-                errors.push(format!("Blocked CIDR in scope (private/reserved): {}", cidr));
+                errors.push(format!(
+                    "Blocked CIDR in scope (private/reserved): {}",
+                    cidr
+                ));
             }
         }
 
@@ -164,10 +167,7 @@ impl ScopeEngine {
         // Validate first
         let validation = self.validate_definition(&definition)?;
         if !validation.is_valid {
-            anyhow::bail!(
-                "Invalid scope definition: {}",
-                validation.errors.join(", ")
-            );
+            anyhow::bail!("Invalid scope definition: {}", validation.errors.join(", "));
         }
 
         Ok(Scope::from_definition(definition, program))
@@ -261,10 +261,7 @@ impl ScopeEngine {
             if label.starts_with('-') || label.ends_with('-') {
                 return false;
             }
-            if !label
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-')
-            {
+            if !label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
                 return false;
             }
         }
@@ -288,9 +285,7 @@ impl ScopeEngine {
     fn matches_pattern(target: &str, pattern: &str) -> bool {
         if pattern.contains('*') {
             // Simple wildcard matching
-            let re_pattern = pattern
-                .replace('.', r"\.")
-                .replace('*', ".*");
+            let re_pattern = pattern.replace('.', r"\.").replace('*', ".*");
             if let Ok(re) = Regex::new(&format!("^{}$", re_pattern)) {
                 return re.is_match(target);
             }
@@ -353,7 +348,9 @@ mod tests {
     fn test_valid_domain() {
         assert!(ScopeEngine::is_valid_domain_or_wildcard("example.com"));
         assert!(ScopeEngine::is_valid_domain_or_wildcard("*.example.com"));
-        assert!(ScopeEngine::is_valid_domain_or_wildcard("sub.domain.example.com"));
+        assert!(ScopeEngine::is_valid_domain_or_wildcard(
+            "sub.domain.example.com"
+        ));
         assert!(!ScopeEngine::is_valid_domain_or_wildcard(""));
         assert!(!ScopeEngine::is_valid_domain_or_wildcard("-invalid.com"));
     }
@@ -383,10 +380,7 @@ mod tests {
             ScopeEngine::normalize_domain("https://Example.COM/"),
             "example.com"
         );
-        assert_eq!(
-            ScopeEngine::normalize_domain("http://test.com"),
-            "test.com"
-        );
+        assert_eq!(ScopeEngine::normalize_domain("http://test.com"), "test.com");
     }
 
     #[test]

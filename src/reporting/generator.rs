@@ -46,8 +46,8 @@ impl ReportGenerator {
         let medium = findings.iter().filter(|f| f.severity == "medium").count();
         let low = findings.iter().filter(|f| f.severity == "low").count();
 
-        md.push_str(&format!("| Severity | Count |\n"));
-        md.push_str(&format!("|----------|-------|\n"));
+        md.push_str("| Severity | Count |\n");
+        md.push_str("|----------|-------|\n");
         md.push_str(&format!("| Critical | {} |\n", critical));
         md.push_str(&format!("| High | {} |\n", high));
         md.push_str(&format!("| Medium | {} |\n", medium));
@@ -129,7 +129,7 @@ impl ReportGenerator {
         html.push_str("<h2>Findings</h2>\n");
 
         for finding in findings {
-            html.push_str(&format!("<div class='finding'>\n"));
+            html.push_str("<div class='finding'>\n");
             html.push_str(&format!("<h3>{}</h3>\n", html_escape(&finding.title)));
             html.push_str(&format!(
                 "<p><strong>Severity:</strong> <span class='{}'>{}</span></p>\n",
@@ -291,7 +291,7 @@ This finding may increase external attack surface risk for the mapped asset.\n\n
         ));
 
         md.push_str("## Risk Overview\n\n");
-        md.push_str(&format!("| Severity | Count |\n|---|---|\n"));
+        md.push_str("| Severity | Count |\n|---|---|\n");
         md.push_str(&format!("| 🔴 Critical | {} |\n", critical));
         md.push_str(&format!("| 🟠 High | {} |\n", high));
         md.push_str(&format!("| 🟡 Medium | {} |\n", medium));
@@ -311,7 +311,7 @@ This finding may increase external attack surface risk for the mapped asset.\n\n
 
         md.push_str("# Attack Surface Summary\n\n");
         md.push_str("## Asset Inventory\n\n");
-        md.push_str(&format!("| Asset Type | Count |\n|---|---|\n"));
+        md.push_str("| Asset Type | Count |\n|---|---|\n");
         md.push_str(&format!("| Domains | {} |\n", summary.domain_count));
         md.push_str(&format!("| Subdomains | {} |\n", summary.subdomain_count));
         md.push_str(&format!("| IP Addresses | {} |\n", summary.ip_count));

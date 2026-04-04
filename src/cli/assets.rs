@@ -150,11 +150,19 @@ impl AssetsCommand {
                 _ => asset.asset_type.normal(),
             };
 
-            println!("  {} [{}] {}", asset.id.cyan(), type_color, asset.value.bold());
+            println!(
+                "  {} [{}] {}",
+                asset.id.cyan(),
+                type_color,
+                asset.value.bold()
+            );
             if !asset.tags.is_empty() {
                 println!("    Tags: {}", asset.tags.join(", "));
             }
-            println!("    First seen: {} | Last seen: {}", asset.first_seen, asset.last_seen);
+            println!(
+                "    First seen: {} | Last seen: {}",
+                asset.first_seen, asset.last_seen
+            );
             println!();
         }
 
@@ -176,7 +184,10 @@ impl AssetsCommand {
             if diff.added.is_empty() {
                 println!("{}", "No assets added.".yellow());
             } else {
-                println!("{}", format!("Added ({}):", diff.added.len()).green().bold());
+                println!(
+                    "{}",
+                    format!("Added ({}):", diff.added.len()).green().bold()
+                );
                 for asset in &diff.added {
                     println!("  {} {} [{}]", "+".green(), asset.value, asset.asset_type);
                 }
@@ -188,7 +199,10 @@ impl AssetsCommand {
             if diff.removed.is_empty() {
                 println!("{}", "No assets removed.".yellow());
             } else {
-                println!("{}", format!("Removed ({}):", diff.removed.len()).red().bold());
+                println!(
+                    "{}",
+                    format!("Removed ({}):", diff.removed.len()).red().bold()
+                );
                 for asset in &diff.removed {
                     println!("  {} {} [{}]", "-".red(), asset.value, asset.asset_type);
                 }
@@ -203,7 +217,9 @@ impl AssetsCommand {
         } else if !args.added_only && !args.removed_only {
             println!(
                 "{}",
-                format!("Modified ({}):", diff.modified.len()).yellow().bold()
+                format!("Modified ({}):", diff.modified.len())
+                    .yellow()
+                    .bold()
             );
             for asset in &diff.modified {
                 println!("  {} {} [{}]", "~".yellow(), asset.value, asset.asset_type);

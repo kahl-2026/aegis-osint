@@ -10,15 +10,13 @@ mod offensive_tests {
             name: "Offensive Test Scope".to_string(),
             description: None,
             program: Some("test".to_string()),
-            items: vec![
-                ScopeItem {
-                    item_type: ScopeItemType::Wildcard,
-                    value: "*.example.com".to_string(),
-                    in_scope: true,
-                    priority: 10,
-                    notes: None,
-                },
-            ],
+            items: vec![ScopeItem {
+                item_type: ScopeItemType::Wildcard,
+                value: "*.example.com".to_string(),
+                in_scope: true,
+                priority: 10,
+                notes: None,
+            }],
             active: true,
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
@@ -32,7 +30,7 @@ mod offensive_tests {
     #[test]
     fn test_scope_enforcement_in_discovery() {
         let scope = create_test_scope();
-        
+
         // Verify scope is properly configured
         assert!(scope.is_in_scope("test.example.com").in_scope);
         assert!(!scope.is_in_scope("test.notexample.com").in_scope);

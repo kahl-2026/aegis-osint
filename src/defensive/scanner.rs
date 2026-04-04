@@ -2,7 +2,7 @@
 
 use crate::policy::PolicyEngine;
 use crate::scope::Scope;
-use crate::storage::{DefensiveScanResult, Storage};
+use crate::storage::{DefensiveScanResult, FindingContext, Storage};
 use anyhow::Result;
 use chrono::Utc;
 use std::time::Instant;
@@ -45,7 +45,9 @@ impl DefensiveScanner {
             "drift".to_string(),
             "exposure".to_string(),
         ];
-        let all_checks = checks.map(|c| c.as_slice()).unwrap_or(default_checks.as_slice());
+        let all_checks = checks
+            .map(|c| c.as_slice())
+            .unwrap_or(default_checks.as_slice());
 
         for check in all_checks {
             match check.as_ref() {
@@ -141,8 +143,10 @@ impl DefensiveScanner {
             .storage
             .list_findings(
                 Some("critical".to_string()),
-                Some(&self.scope.id),
-                None,
+                FindingContext {
+                    scope: Some(&self.scope.id),
+                    run: None,
+                },
                 Some("open".to_string()),
                 None,
                 10_000,
@@ -153,8 +157,10 @@ impl DefensiveScanner {
             .storage
             .list_findings(
                 Some("high".to_string()),
-                Some(&self.scope.id),
-                None,
+                FindingContext {
+                    scope: Some(&self.scope.id),
+                    run: None,
+                },
                 Some("open".to_string()),
                 None,
                 10_000,

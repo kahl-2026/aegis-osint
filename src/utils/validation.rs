@@ -31,11 +31,7 @@ pub fn validate_url(url_str: &str) -> bool {
 
 /// Sanitize input string
 pub fn sanitize_input(input: &str) -> String {
-    input
-        .trim()
-        .chars()
-        .filter(|c| !c.is_control())
-        .collect()
+    input.trim().chars().filter(|c| !c.is_control()).collect()
 }
 
 /// Validate ASN format

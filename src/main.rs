@@ -99,7 +99,7 @@ async fn run_interactive_menu() -> Result<u8> {
     // Initialize storage and config for the menu
     let config = Config::load_or_create().await?;
     let storage = Storage::initialize(&config).await?;
-    
+
     let mut menu = Menu::with_storage_and_config(storage, config);
     menu.run().await?;
     Ok(exit_codes::SUCCESS)
@@ -112,7 +112,10 @@ async fn handle_first_run() -> Result<u8> {
     println!("{}", LEGAL_DISCLAIMER.yellow());
     println!();
 
-    print!("{}", "Do you acknowledge and accept these terms? [y/N]: ".bold());
+    print!(
+        "{}",
+        "Do you acknowledge and accept these terms? [y/N]: ".bold()
+    );
     io::stdout().flush()?;
 
     let mut input = String::new();
@@ -133,9 +136,18 @@ async fn handle_first_run() -> Result<u8> {
         );
         println!();
         println!("{}", "Quick start:".bold());
-        println!("  {} - Import authorized scope", "aegis scope import --file scope.yaml".cyan());
-        println!("  {} - Run offensive recon", "aegis offensive run --program <name>".cyan());
-        println!("  {} - Start defensive monitoring", "aegis defensive monitor --scope <id>".cyan());
+        println!(
+            "  {} - Import authorized scope",
+            "aegis scope import --file scope.yaml".cyan()
+        );
+        println!(
+            "  {} - Run offensive recon",
+            "aegis offensive run --program <name>".cyan()
+        );
+        println!(
+            "  {} - Start defensive monitoring",
+            "aegis defensive monitor --scope <id>".cyan()
+        );
         println!("  {} - Launch interactive menu", "aegis menu".cyan());
         println!("  {} - System health check", "aegis doctor".cyan());
         println!();

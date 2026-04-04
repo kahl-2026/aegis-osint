@@ -2,7 +2,7 @@
 
 use crate::policy::PolicyEngine;
 use crate::scope::Scope;
-use crate::storage::Storage;
+use crate::storage::{FindingContext, Storage};
 use anyhow::Result;
 use chrono::Utc;
 
@@ -70,15 +70,22 @@ impl DefensiveOrchestrator {
 
     /// Run interactive monitoring (blocking)
     pub async fn run_interactive(&self) -> Result<()> {
-        use tokio::time::{interval, Duration};
         use colored::Colorize;
+        use tokio::time::{interval, Duration};
 
         let mut ticker = interval(Duration::from_secs(self.interval_minutes as u64 * 60));
 
         loop {
             ticker.tick().await;
 
-            println!("{}", format!("[{}] Running monitoring check...", Utc::now().format("%H:%M:%S")).cyan());
+            println!(
+                "{}",
+                format!(
+                    "[{}] Running monitoring check...",
+                    Utc::now().format("%H:%M:%S")
+                )
+                .cyan()
+            );
 
             // Run monitoring checks
             if self.drift_detection {
@@ -163,8 +170,10 @@ impl DefensiveOrchestrator {
             .storage
             .list_findings(
                 Some("critical".to_string()),
-                Some(&self.scope.id),
-                None,
+                FindingContext {
+                    scope: Some(&self.scope.id),
+                    run: None,
+                },
                 Some("open".to_string()),
                 None,
                 1000,
@@ -175,8 +184,10 @@ impl DefensiveOrchestrator {
             .storage
             .list_findings(
                 Some("high".to_string()),
-                Some(&self.scope.id),
-                None,
+                FindingContext {
+                    scope: Some(&self.scope.id),
+                    run: None,
+                },
                 Some("open".to_string()),
                 None,
                 1000,
@@ -191,4 +202,3 @@ impl DefensiveOrchestrator {
         Ok(())
     }
 }
-

@@ -1,7 +1,7 @@
 //! Findings management commands
 
 use crate::policy::PolicyEngine;
-use crate::storage::Storage;
+use crate::storage::{FindingContext, Storage};
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
@@ -180,10 +180,16 @@ impl FindingsCommand {
     async fn handle_list(args: &FindingsListArgs, storage: &Storage) -> Result<u8> {
         let findings = storage
             .list_findings(
-                args.severity.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
-                args.scope.as_deref(),
-                args.run.as_deref(),
-                args.status.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
+                args.severity
+                    .as_ref()
+                    .map(|s| format!("{:?}", s).to_lowercase()),
+                FindingContext {
+                    scope: args.scope.as_deref(),
+                    run: args.run.as_deref(),
+                },
+                args.status
+                    .as_ref()
+                    .map(|s| format!("{:?}", s).to_lowercase()),
                 args.asset.as_deref(),
                 args.limit,
                 &args.sort,
@@ -195,10 +201,7 @@ impl FindingsCommand {
             return Ok(0);
         }
 
-        println!(
-            "{}",
-            format!("Findings ({} total):", findings.len()).bold()
-        );
+        println!("{}", format!("Findings ({} total):", findings.len()).bold());
         println!();
 
         for finding in &findings {
@@ -216,7 +219,10 @@ impl FindingsCommand {
                 severity_color,
                 finding.title.bold()
             );
-            println!("    Asset: {} | Confidence: {}%", finding.asset, finding.confidence);
+            println!(
+                "    Asset: {} | Confidence: {}%",
+                finding.asset, finding.confidence
+            );
             if let Some(status) = &finding.status {
                 println!("    Status: {}", status);
             }
@@ -226,7 +232,11 @@ impl FindingsCommand {
         if findings.len() >= args.limit {
             println!(
                 "{}",
-                format!("Showing first {} results. Use --limit to see more.", args.limit).yellow()
+                format!(
+                    "Showing first {} results. Use --limit to see more.",
+                    args.limit
+                )
+                .yellow()
             );
         }
 
@@ -251,10 +261,7 @@ impl FindingsCommand {
                     _ => finding.severity.normal(),
                 };
 
-                println!(
-                    "{}",
-                    format!("Finding: {}", finding.title).bold()
-                );
+                println!("{}", format!("Finding: {}", finding.title).bold());
                 println!("{}", "─".repeat(60));
                 println!();
                 println!("  {} {}", "ID:".bold(), finding.id);
@@ -262,7 +269,11 @@ impl FindingsCommand {
                 println!("  {} {}%", "Confidence:".bold(), finding.confidence);
                 println!("  {} {}", "Asset:".bold(), finding.asset);
                 println!("  {} {}", "Type:".bold(), finding.finding_type);
-                println!("  {} {}", "Status:".bold(), finding.status.as_deref().unwrap_or("open"));
+                println!(
+                    "  {} {}",
+                    "Status:".bold(),
+                    finding.status.as_deref().unwrap_or("open")
+                );
                 println!("  {} {}", "Discovered:".bold(), finding.created_at);
                 println!();
 
@@ -299,10 +310,7 @@ impl FindingsCommand {
                 Ok(0)
             }
             None => {
-                println!(
-                    "{}",
-                    format!("Finding '{}' not found.", args.id).red()
-                );
+                println!("{}", format!("Finding '{}' not found.", args.id).red());
                 Ok(8)
             }
         }
@@ -323,23 +331,24 @@ impl FindingsCommand {
 
                     if result.verified {
                         println!("{}", "✓ Finding verified".green().bold());
-                        storage.update_finding_status(&args.id, "verified", args.notes.as_deref()).await?;
+                        storage
+                            .update_finding_status(&args.id, "verified", args.notes.as_deref())
+                            .await?;
                     } else {
                         println!("{}", "✗ Finding could not be verified".yellow());
                         println!("  Reason: {}", result.reason);
                     }
                 } else {
-                    storage.update_finding_status(&args.id, "verified", args.notes.as_deref()).await?;
+                    storage
+                        .update_finding_status(&args.id, "verified", args.notes.as_deref())
+                        .await?;
                     println!("{}", "✓ Finding marked as verified".green().bold());
                 }
 
                 Ok(0)
             }
             None => {
-                println!(
-                    "{}",
-                    format!("Finding '{}' not found.", args.id).red()
-                );
+                println!("{}", format!("Finding '{}' not found.", args.id).red());
                 Ok(8)
             }
         }
@@ -351,18 +360,19 @@ impl FindingsCommand {
         match finding {
             Some(_) => {
                 let status = format!("{:?}", args.status).to_lowercase();
-                storage.update_finding_status(&args.id, &status, args.notes.as_deref()).await?;
+                storage
+                    .update_finding_status(&args.id, &status, args.notes.as_deref())
+                    .await?;
                 println!(
                     "{}",
-                    format!("✓ Finding '{}' updated to {}", args.id, status).green().bold()
+                    format!("✓ Finding '{}' updated to {}", args.id, status)
+                        .green()
+                        .bold()
                 );
                 Ok(0)
             }
             None => {
-                println!(
-                    "{}",
-                    format!("Finding '{}' not found.", args.id).red()
-                );
+                println!("{}", format!("Finding '{}' not found.", args.id).red());
                 Ok(8)
             }
         }
@@ -373,9 +383,13 @@ impl FindingsCommand {
 
         let findings = storage
             .list_findings(
-                args.severity.as_ref().map(|s| format!("{:?}", s).to_lowercase()),
-                args.scope.as_deref(),
-                None,
+                args.severity
+                    .as_ref()
+                    .map(|s| format!("{:?}", s).to_lowercase()),
+                FindingContext {
+                    scope: args.scope.as_deref(),
+                    run: None,
+                },
                 Some("open".to_string()),
                 None,
                 1000,
@@ -406,25 +420,32 @@ impl FindingsCommand {
         tokio::fs::write(&args.output, content).await?;
         println!(
             "{}",
-            format!("✓ {} findings exported to {:?}", findings.len(), args.output).green().bold()
+            format!(
+                "✓ {} findings exported to {:?}",
+                findings.len(),
+                args.output
+            )
+            .green()
+            .bold()
         );
 
         Ok(0)
     }
 
     async fn handle_remediation(args: &FindingsRemediationArgs, storage: &Storage) -> Result<u8> {
-        let queue = storage.generate_remediation_queue(
-            &args.scope,
-            args.with_owners,
-            args.with_sla,
-        ).await?;
+        let queue = storage
+            .generate_remediation_queue(&args.scope, args.with_owners, args.with_sla)
+            .await?;
 
         if queue.is_empty() {
             println!("{}", "No open findings require remediation.".yellow());
             return Ok(0);
         }
 
-        println!("{}", format!("Remediation Queue ({} items):", queue.len()).bold());
+        println!(
+            "{}",
+            format!("Remediation Queue ({} items):", queue.len()).bold()
+        );
         println!();
 
         for item in &queue {
@@ -443,7 +464,10 @@ impl FindingsCommand {
             );
             println!("    Asset: {}", item.asset);
             if args.with_owners {
-                println!("    Owner: {}", item.owner.as_deref().unwrap_or("Unassigned"));
+                println!(
+                    "    Owner: {}",
+                    item.owner.as_deref().unwrap_or("Unassigned")
+                );
             }
             if args.with_sla {
                 println!("    SLA: {}", item.sla.as_deref().unwrap_or("Not set"));

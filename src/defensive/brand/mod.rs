@@ -35,8 +35,14 @@ impl BrandMonitor {
 
         // Character substitution
         let substitutions = [
-            ('a', 'e'), ('e', 'a'), ('i', '1'), ('l', '1'),
-            ('o', '0'), ('s', '5'), ('s', 'z'), ('g', '9'),
+            ('a', 'e'),
+            ('e', 'a'),
+            ('i', '1'),
+            ('l', '1'),
+            ('o', '0'),
+            ('s', '5'),
+            ('s', 'z'),
+            ('g', '9'),
         ];
 
         for (from, to) in substitutions {
@@ -199,15 +205,20 @@ impl BrandMonitor {
             patterns.push("hyphenation".to_string());
         }
 
-        if domain.contains(&format!("{}login", brand)) || domain.contains(&format!("{}account", brand)) {
+        if domain.contains(&format!("{}login", brand))
+            || domain.contains(&format!("{}account", brand))
+        {
             patterns.push("credential_harvesting".to_string());
         }
 
-        if domain.contains(&format!("{}secure", brand)) || domain.contains(&format!("my{}", brand)) {
+        if domain.contains(&format!("{}secure", brand)) || domain.contains(&format!("my{}", brand))
+        {
             patterns.push("trust_abuse".to_string());
         }
 
-        if domain.contains(&format!("{}support", brand)) || domain.contains(&format!("{}help", brand)) {
+        if domain.contains(&format!("{}support", brand))
+            || domain.contains(&format!("{}help", brand))
+        {
             patterns.push("support_impersonation".to_string());
         }
 
@@ -222,20 +233,30 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
     let m = a_chars.len();
     let n = b_chars.len();
 
-    if m == 0 { return n; }
-    if n == 0 { return m; }
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
 
     let mut dp = vec![vec![0; n + 1]; m + 1];
 
-    for i in 0..=m { dp[i][0] = i; }
-    for j in 0..=n { dp[0][j] = j; }
+    for (i, row) in dp.iter_mut().enumerate().take(m + 1) {
+        row[0] = i;
+    }
+    for (j, cell) in dp[0].iter_mut().enumerate().take(n + 1) {
+        *cell = j;
+    }
 
-    for i in 1..=m {
-        for j in 1..=n {
-            let cost = if a_chars[i-1] == b_chars[j-1] { 0 } else { 1 };
-            dp[i][j] = std::cmp::min(
-                std::cmp::min(dp[i-1][j] + 1, dp[i][j-1] + 1),
-                dp[i-1][j-1] + cost,
+    for (i, &a_char) in a_chars.iter().enumerate() {
+        for (j, &b_char) in b_chars.iter().enumerate() {
+            let i_idx = i + 1;
+            let j_idx = j + 1;
+            let cost = usize::from(a_char != b_char);
+            dp[i_idx][j_idx] = std::cmp::min(
+                std::cmp::min(dp[i_idx - 1][j_idx] + 1, dp[i_idx][j_idx - 1] + 1),
+                dp[i_idx - 1][j_idx - 1] + cost,
             );
         }
     }

@@ -1,7 +1,7 @@
 //! Offensive OSINT commands
 
 use crate::policy::PolicyEngine;
-use crate::storage::Storage;
+use crate::storage::{FindingContext, Storage};
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
@@ -23,20 +23,15 @@ pub enum OffensiveCommand {
 }
 
 /// Scan profile determining aggressiveness
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Default)]
 pub enum ScanProfile {
     /// Safe mode - minimal footprint, passive only
+    #[default]
     Safe,
     /// Standard mode - balanced active/passive recon
     Standard,
     /// Thorough mode - comprehensive but slower
     Thorough,
-}
-
-impl Default for ScanProfile {
-    fn default() -> Self {
-        Self::Safe
-    }
 }
 
 #[derive(Args, Debug)]
@@ -121,10 +116,7 @@ impl OffensiveCommand {
         use crate::offensive::OffensiveOrchestrator;
         use indicatif::{ProgressBar, ProgressStyle};
 
-        println!(
-            "{}",
-            "AegisOSINT - Offensive Reconnaissance".cyan().bold()
-        );
+        println!("{}", "AegisOSINT - Offensive Reconnaissance".cyan().bold());
         println!();
 
         // Display scope validation header
@@ -161,16 +153,14 @@ impl OffensiveCommand {
             scope.domain_count,
             scope.cidr_count
         );
-        println!(
-            "  {} {:?}",
-            "Profile:".bold(),
-            args.profile
-        );
+        println!("  {} {:?}", "Profile:".bold(), args.profile);
         println!("{}", "─".repeat(60));
         println!();
 
         // Check policy allows this operation
-        let policy_check = policy.check_offensive_operation(&args.program, &scope).await?;
+        let policy_check = policy
+            .check_offensive_operation(&args.program, &scope)
+            .await?;
         if !policy_check.allowed {
             println!("{}", "✗ Operation blocked by policy".red().bold());
             for reason in &policy_check.reasons {
@@ -191,7 +181,9 @@ impl OffensiveCommand {
         }
 
         // Create scan run
-        let run_id = storage.create_scan_run(&args.program, &scope.id, "offensive").await?;
+        let run_id = storage
+            .create_scan_run(&args.program, &scope.id, "offensive")
+            .await?;
         println!("{}", format!("Scan ID: {}", run_id).cyan());
         println!();
 
@@ -212,10 +204,12 @@ impl OffensiveCommand {
             storage.clone(),
         );
 
-        let result = orchestrator.execute(&run_id, |stage, percent| {
-            progress.set_position(percent as u64);
-            progress.set_message(stage.to_string());
-        }).await;
+        let result = orchestrator
+            .execute(&run_id, |stage, percent| {
+                progress.set_position(percent as u64);
+                progress.set_message(stage.to_string());
+            })
+            .await;
 
         progress.finish_and_clear();
 
@@ -229,13 +223,31 @@ impl OffensiveCommand {
                 println!("  {:24} {}", "Scope ID".bold(), scope_id.cyan());
                 println!("  {:24} {}", "Run ID".bold(), run_id.cyan());
                 println!("  {:24} {:?}", "Profile".bold(), args.profile);
-                println!("  {:24} {}", "Assets discovered".bold(), summary.assets_count);
-                println!("  {:24} {}", "Findings created".bold(), summary.findings_count);
+                println!(
+                    "  {:24} {}",
+                    "Assets discovered".bold(),
+                    summary.assets_count
+                );
+                println!(
+                    "  {:24} {}",
+                    "Findings created".bold(),
+                    summary.findings_count
+                );
                 println!("  {:24} {:.2}s", "Duration".bold(), summary.duration_secs);
                 println!("{}", "─".repeat(60).dimmed());
 
                 if let Ok(recent) = storage
-                    .list_findings(None, Some(&scope_id), Some(&run_id), None, None, 10, "severity")
+                    .list_findings(
+                        None,
+                        FindingContext {
+                            scope: Some(&scope_id),
+                            run: Some(&run_id),
+                        },
+                        None,
+                        None,
+                        10,
+                        "severity",
+                    )
                     .await
                 {
                     if !recent.is_empty() {
@@ -266,7 +278,11 @@ impl OffensiveCommand {
                 );
                 println!(
                     "Export report: {}",
-                    format!("aegis report export --scope {} --format markdown --output report.md", scope_id).cyan()
+                    format!(
+                        "aegis report export --scope {} --format markdown --output report.md",
+                        scope_id
+                    )
+                    .cyan()
                 );
                 Ok(0)
             }
@@ -284,7 +300,10 @@ impl OffensiveCommand {
         // Safe profile
         println!("{}", "safe".green().bold());
         println!("  Minimal footprint, passive reconnaissance only");
-        println!("  {} CT logs, DNS records, public metadata", "Includes:".bold());
+        println!(
+            "  {} CT logs, DNS records, public metadata",
+            "Includes:".bold()
+        );
         if args.verbose {
             println!("  Modules:");
             for module in Self::get_modules_for_profile(ScanProfile::Safe) {
@@ -296,7 +315,10 @@ impl OffensiveCommand {
         // Standard profile
         println!("{}", "standard".cyan().bold());
         println!("  Balanced active/passive reconnaissance");
-        println!("  {} All safe + light probing, fingerprinting", "Includes:".bold());
+        println!(
+            "  {} All safe + light probing, fingerprinting",
+            "Includes:".bold()
+        );
         if args.verbose {
             println!("  Modules:");
             for module in Self::get_modules_for_profile(ScanProfile::Standard) {
@@ -338,10 +360,7 @@ impl OffensiveCommand {
                 Ok(0)
             }
             None => {
-                println!(
-                    "{}",
-                    format!("Scan '{}' not found.", args.run_id).red()
-                );
+                println!("{}", format!("Scan '{}' not found.", args.run_id).red());
                 Ok(8)
             }
         }
@@ -362,15 +381,16 @@ impl OffensiveCommand {
             Some(run) => {
                 println!(
                     "{}",
-                    format!("Scan '{}' is not running (status: {})", args.run_id, run.status).yellow()
+                    format!(
+                        "Scan '{}' is not running (status: {})",
+                        args.run_id, run.status
+                    )
+                    .yellow()
                 );
                 Ok(0)
             }
             None => {
-                println!(
-                    "{}",
-                    format!("Scan '{}' not found.", args.run_id).red()
-                );
+                println!("{}", format!("Scan '{}' not found.", args.run_id).red());
                 Ok(8)
             }
         }

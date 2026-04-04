@@ -64,70 +64,71 @@ impl WebReconEngine {
             match self.client.head(&candidate_url).send().await {
                 Ok(response) => {
                     result.url = candidate_url.clone();
-                // Collect all headers
-                for (name, value) in response.headers().iter() {
-                    if let Ok(v) = value.to_str() {
-                        result.headers.insert(name.to_string(), v.to_string());
+                    // Collect all headers
+                    for (name, value) in response.headers().iter() {
+                        if let Ok(v) = value.to_str() {
+                            result.headers.insert(name.to_string(), v.to_string());
+                        }
                     }
-                }
 
-                // Check for missing security headers
-                let security_headers = [
-                    "strict-transport-security",
-                    "content-security-policy",
-                    "x-content-type-options",
-                    "x-frame-options",
-                    "x-xss-protection",
-                    "referrer-policy",
-                    "permissions-policy",
-                ];
+                    // Check for missing security headers
+                    let security_headers = [
+                        "strict-transport-security",
+                        "content-security-policy",
+                        "x-content-type-options",
+                        "x-frame-options",
+                        "x-xss-protection",
+                        "referrer-policy",
+                        "permissions-policy",
+                    ];
 
-                for header in security_headers {
-                    if !result.headers.contains_key(header) {
-                        result.missing_security_headers.push(header.to_string());
+                    for header in security_headers {
+                        if !result.headers.contains_key(header) {
+                            result.missing_security_headers.push(header.to_string());
+                        }
                     }
-                }
 
-                // Check for misconfigured headers
-                if let Some(csp) = result.headers.get("content-security-policy") {
-                    if csp.contains("unsafe-inline") || csp.contains("unsafe-eval") {
-                        result.misconfigured_headers.push(HeaderIssue {
-                            header: "content-security-policy".to_string(),
-                            issue: "Contains unsafe directives".to_string(),
-                            severity: "medium".to_string(),
+                    // Check for misconfigured headers
+                    if let Some(csp) = result.headers.get("content-security-policy") {
+                        if csp.contains("unsafe-inline") || csp.contains("unsafe-eval") {
+                            result.misconfigured_headers.push(HeaderIssue {
+                                header: "content-security-policy".to_string(),
+                                issue: "Contains unsafe directives".to_string(),
+                                severity: "medium".to_string(),
+                            });
+                        }
+                    }
+
+                    if let Some(cors) = result.headers.get("access-control-allow-origin") {
+                        if cors == "*" {
+                            result.misconfigured_headers.push(HeaderIssue {
+                                header: "access-control-allow-origin".to_string(),
+                                issue: "Wildcard CORS policy".to_string(),
+                                severity: "medium".to_string(),
+                            });
+                        }
+                    }
+
+                    // Technology fingerprinting from headers
+                    if let Some(server) = result.headers.get("server") {
+                        result.technologies.push(Technology {
+                            name: "Server".to_string(),
+                            version: Some(server.clone()),
+                            confidence: 90,
                         });
                     }
-                }
 
-                if let Some(cors) = result.headers.get("access-control-allow-origin") {
-                    if cors == "*" {
-                        result.misconfigured_headers.push(HeaderIssue {
-                            header: "access-control-allow-origin".to_string(),
-                            issue: "Wildcard CORS policy".to_string(),
-                            severity: "medium".to_string(),
+                    if let Some(powered) = result.headers.get("x-powered-by") {
+                        result.technologies.push(Technology {
+                            name: "Framework".to_string(),
+                            version: Some(powered.clone()),
+                            confidence: 90,
                         });
                     }
-                }
 
-                // Technology fingerprinting from headers
-                if let Some(server) = result.headers.get("server") {
-                    result.technologies.push(Technology {
-                        name: "Server".to_string(),
-                        version: Some(server.clone()),
-                        confidence: 90,
-                    });
-                }
-
-                if let Some(powered) = result.headers.get("x-powered-by") {
-                    result.technologies.push(Technology {
-                        name: "Framework".to_string(),
-                        version: Some(powered.clone()),
-                        confidence: 90,
-                    });
-                }
-
-                // Generate findings for issues
-                    self.generate_header_findings(&candidate_url, &result).await?;
+                    // Generate findings for issues
+                    self.generate_header_findings(&candidate_url, &result)
+                        .await?;
                     return Ok(result);
                 }
                 Err(e) => {
@@ -165,31 +166,36 @@ impl WebReconEngine {
                 Ok(response) => {
                     had_successful_response = true;
                     last_error = None;
-                if let Ok(body) = response.text().await {
-                    // Find script tags and extract URLs
+                    if let Ok(body) = response.text().await {
+                        // Find script tags and extract URLs
                         let script_urls = self.extract_script_urls(&body, &candidate_url);
 
-                    for script_url in script_urls {
-                        if let Ok(parsed) = url::Url::parse(&script_url) {
-                            let script_host = parsed.host_str().unwrap_or("");
-                            if self.scope.is_in_scope(script_host).in_scope {
-                                self.policy.wait_for_rate_limit().await;
+                        for script_url in script_urls {
+                            if let Ok(parsed) = url::Url::parse(&script_url) {
+                                let script_host = parsed.host_str().unwrap_or("");
+                                if self.scope.is_in_scope(script_host).in_scope {
+                                    self.policy.wait_for_rate_limit().await;
 
-                                if let Ok(js_response) = self.client.get(&script_url).send().await {
-                                    if let Ok(js_content) = js_response.text().await {
-                                            let found =
-                                                self.extract_endpoints_from_js(&js_content, &candidate_url);
-                                        endpoints.extend(found);
+                                    if let Ok(js_response) =
+                                        self.client.get(&script_url).send().await
+                                    {
+                                        if let Ok(js_content) = js_response.text().await {
+                                            let found = self.extract_endpoints_from_js(
+                                                &js_content,
+                                                &candidate_url,
+                                            );
+                                            endpoints.extend(found);
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    // Also extract endpoints from inline scripts
-                        let inline_endpoints = self.extract_endpoints_from_js(&body, &candidate_url);
-                    endpoints.extend(inline_endpoints);
-                }
+                        // Also extract endpoints from inline scripts
+                        let inline_endpoints =
+                            self.extract_endpoints_from_js(&body, &candidate_url);
+                        endpoints.extend(inline_endpoints);
+                    }
                     break;
                 }
                 Err(e) => {
@@ -293,10 +299,7 @@ impl WebReconEngine {
         let mut urls = Vec::new();
 
         // Best-effort regex extraction for src attributes
-        let patterns = [
-            r#"src="([^"]+\.js[^"]*)""#,
-            r#"src='([^']+\.js[^']*)'"#,
-        ];
+        let patterns = [r#"src="([^"]+\.js[^"]*)""#, r#"src='([^']+\.js[^']*)'"#];
 
         for pattern in patterns {
             if let Ok(re) = regex::Regex::new(pattern) {
@@ -309,7 +312,12 @@ impl WebReconEngine {
                             urls.push(format!("https:{}", src_str));
                         } else if src_str.starts_with('/') {
                             if let Ok(base) = url::Url::parse(base_url) {
-                                urls.push(format!("{}://{}{}", base.scheme(), base.host_str().unwrap_or(""), src_str));
+                                urls.push(format!(
+                                    "{}://{}{}",
+                                    base.scheme(),
+                                    base.host_str().unwrap_or(""),
+                                    src_str
+                                ));
                             }
                         }
                     }
@@ -359,7 +367,11 @@ impl WebReconEngine {
         }
     }
 
-    async fn generate_header_findings(&self, url: &str, result: &HeaderAnalysisResult) -> Result<()> {
+    async fn generate_header_findings(
+        &self,
+        url: &str,
+        result: &HeaderAnalysisResult,
+    ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
         // Generate findings for missing security headers
@@ -399,14 +411,19 @@ impl WebReconEngine {
         // Generate findings for misconfigured headers
         for issue in &result.misconfigured_headers {
             let finding = Finding {
-                id: format!("header-misconfig-{}-{}", sha256_short(&issue.header), sha256_short(url)),
+                id: format!(
+                    "header-misconfig-{}-{}",
+                    sha256_short(&issue.header),
+                    sha256_short(url)
+                ),
                 scope_id: self.scope.id.clone(),
                 run_id: None,
                 asset: url.to_string(),
                 finding_type: "security-header".to_string(),
                 title: format!("Misconfigured {}", issue.header),
                 description: issue.issue.clone(),
-                impact: "Misconfigured security headers can weaken security protections.".to_string(),
+                impact: "Misconfigured security headers can weaken security protections."
+                    .to_string(),
                 severity: issue.severity.clone(),
                 confidence: 90,
                 status: Some("open".to_string()),

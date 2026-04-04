@@ -121,7 +121,10 @@ impl DoctorCommand {
             println!("{} ({} scope(s))", "OK".green(), scope_count);
         } else {
             println!("{}", "WARN - no scopes defined".yellow());
-            issues.push("No scopes defined. Import one with: aegis scope import --file scope.yaml".to_string());
+            issues.push(
+                "No scopes defined. Import one with: aegis scope import --file scope.yaml"
+                    .to_string(),
+            );
         }
 
         println!();
@@ -143,7 +146,10 @@ impl DoctorCommand {
             }
             if !self.fix {
                 println!();
-                println!("Run {} to attempt automatic fixes", "aegis doctor --fix".cyan());
+                println!(
+                    "Run {} to attempt automatic fixes",
+                    "aegis doctor --fix".cyan()
+                );
             }
             Ok(1)
         }
@@ -235,9 +241,9 @@ impl DoctorCommand {
 
     async fn check_tools(&self) -> ToolStatus {
         let tools = vec![
-            ("dig", false),    // DNS queries
-            ("whois", false),  // WHOIS lookups
-            ("nmap", false),   // Port scanning (optional)
+            ("dig", false),   // DNS queries
+            ("whois", false), // WHOIS lookups
+            ("nmap", false),  // Port scanning (optional)
         ];
 
         let mut missing = Vec::new();

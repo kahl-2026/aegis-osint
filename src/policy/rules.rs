@@ -126,8 +126,10 @@ impl PolicyCheck for PolicyRule {
                         }
                         RuleAction::Allow => return PolicyCheckResult::allowed(),
                         RuleAction::Warn => {
-                            return PolicyCheckResult::allowed()
-                                .with_reason(format!("Warning from rule '{}': matches '{}'", self.name, pattern));
+                            return PolicyCheckResult::allowed().with_reason(format!(
+                                "Warning from rule '{}': matches '{}'",
+                                self.name, pattern
+                            ));
                         }
                         RuleAction::Log => {
                             tracing::info!(

@@ -184,18 +184,12 @@ mod tests {
 
     #[test]
     fn test_severity_calculator() {
-        let result = SeverityCalculator::calculate(
-            Impact::High,
-            Exploitability::Easy,
-            Scope::Changed,
-        );
+        let result =
+            SeverityCalculator::calculate(Impact::High, Exploitability::Easy, Scope::Changed);
         assert_eq!(result.severity, "critical");
 
-        let result = SeverityCalculator::calculate(
-            Impact::Low,
-            Exploitability::Hard,
-            Scope::Unchanged,
-        );
+        let result =
+            SeverityCalculator::calculate(Impact::Low, Exploitability::Hard, Scope::Unchanged);
         assert_eq!(result.severity, "low");
     }
 

@@ -109,7 +109,10 @@ impl Config {
 
     /// Save configuration to disk
     pub async fn save(&self) -> Result<()> {
-        let config_path = self.config_path.clone().unwrap_or(Self::config_file_path()?);
+        let config_path = self
+            .config_path
+            .clone()
+            .unwrap_or(Self::config_file_path()?);
 
         // Ensure directory exists
         if let Some(parent) = config_path.parent() {

@@ -1,7 +1,7 @@
 //! Report generation commands
 
 use crate::policy::PolicyEngine;
-use crate::storage::Storage;
+use crate::storage::{FindingContext, Storage};
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
@@ -20,17 +20,12 @@ pub enum ReportCommand {
     Templates(ReportTemplatesArgs),
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Default)]
 pub enum ReportFormat {
+    #[default]
     Json,
     Markdown,
     Html,
-}
-
-impl Default for ReportFormat {
-    fn default() -> Self {
-        Self::Json
-    }
 }
 
 #[derive(Args, Debug)]
@@ -108,8 +103,10 @@ impl ReportCommand {
         let findings = storage
             .list_findings(
                 args.min_severity.clone(),
-                args.scope.as_deref(),
-                args.run.as_deref(),
+                FindingContext {
+                    scope: args.scope.as_deref(),
+                    run: args.run.as_deref(),
+                },
                 None,
                 None,
                 10000,

@@ -30,14 +30,24 @@ impl HistoricalDns {
                             if host.is_empty() || !host.ends_with(domain) {
                                 continue;
                             }
-                            let key = format!("ct:{}:{}", host, entry.not_before.clone().unwrap_or_default());
+                            let key = format!(
+                                "ct:{}:{}",
+                                host,
+                                entry.not_before.clone().unwrap_or_default()
+                            );
                             if seen.insert(key) {
                                 records.push(HistoricalDnsRecord {
                                     domain: host.clone(),
                                     record_type: "CT_HOST".to_string(),
                                     value: host,
-                                    first_seen: entry.not_before.clone().unwrap_or_else(|| Utc::now().to_rfc3339()),
-                                    last_seen: entry.not_after.clone().unwrap_or_else(|| Utc::now().to_rfc3339()),
+                                    first_seen: entry
+                                        .not_before
+                                        .clone()
+                                        .unwrap_or_else(|| Utc::now().to_rfc3339()),
+                                    last_seen: entry
+                                        .not_after
+                                        .clone()
+                                        .unwrap_or_else(|| Utc::now().to_rfc3339()),
                                 });
                             }
                         }
@@ -47,7 +57,13 @@ impl HistoricalDns {
         }
 
         // Current DNS snapshots through Google DoH (used as timeline reference points)
-        let doh_types = [("A", 1u8), ("AAAA", 28u8), ("NS", 2u8), ("MX", 15u8), ("TXT", 16u8)];
+        let doh_types = [
+            ("A", 1u8),
+            ("AAAA", 28u8),
+            ("NS", 2u8),
+            ("MX", 15u8),
+            ("TXT", 16u8),
+        ];
         for (kind, t) in doh_types {
             let url = format!(
                 "https://dns.google/resolve?name={}&type={}",
@@ -239,7 +255,10 @@ impl HistoricalCorrelator {
                 old_value: None,
                 new_value: Some(format!(
                     "registrant={}; nameservers={}",
-                    snapshot.registrant.clone().unwrap_or_else(|| "unknown".to_string()),
+                    snapshot
+                        .registrant
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
                     snapshot.nameservers.join(",")
                 )),
             });

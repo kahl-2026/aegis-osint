@@ -200,7 +200,13 @@ pub struct PolicyEngine {
     policy: Arc<RwLock<Policy>>,
 
     /// Rate limiter (using direct/keyed rate limiting)
-    rate_limiter: Arc<governor::RateLimiter<governor::state::NotKeyed, governor::state::InMemoryState, governor::clock::DefaultClock>>,
+    rate_limiter: Arc<
+        governor::RateLimiter<
+            governor::state::NotKeyed,
+            governor::state::InMemoryState,
+            governor::clock::DefaultClock,
+        >,
+    >,
 
     /// Storage reference for audit logging
     storage: Storage,

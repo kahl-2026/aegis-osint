@@ -69,9 +69,10 @@ pub struct Cli {
 }
 
 /// Output format options
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum, Default)]
 pub enum OutputFormat {
     /// Human-readable text with colors
+    #[default]
     Text,
     /// Machine-readable JSON
     Json,
@@ -114,10 +115,4 @@ pub enum Commands {
 
     /// Launch interactive menu (default when no command given)
     Menu,
-}
-
-impl Default for OutputFormat {
-    fn default() -> Self {
-        Self::Text
-    }
 }

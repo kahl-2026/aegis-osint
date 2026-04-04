@@ -7,7 +7,7 @@ use crate::offensive::OffensiveOrchestrator;
 use crate::policy::PolicyEngine;
 use crate::reporting::ReportGenerator;
 use crate::scope::{Scope, ScopeDefinition, ScopeEngine, ScopeItem, ScopeItemType};
-use crate::storage::{MonitorInfo, ScanRunInfo, Storage};
+use crate::storage::{FindingContext, MonitorInfo, ScanRunInfo, Storage};
 use crate::utils::validation::{validate_asn, validate_cidr, validate_domain, validate_url};
 use anyhow::Result;
 use chrono::Utc;
@@ -96,6 +96,13 @@ pub enum SettingsMenuOption {
     EditDatabase,
     ResetDefaults,
     Back,
+}
+
+struct ScopeTargets<'a> {
+    domains: &'a [String],
+    wildcards: &'a [String],
+    cidrs: &'a [String],
+    urls: &'a [String],
 }
 
 /// Interactive menu system
@@ -519,7 +526,7 @@ impl Menu {
     /// Prompt for file path
     pub fn prompt_file(&self, prompt: &str) -> String {
         println!();
-        self.read_input(&format!("  {} {}: ", "📁".to_string(), prompt))
+        self.read_input(&format!("  {} {}: ", "📁", prompt))
     }
 
     /// Prompt for scope selection
@@ -597,11 +604,7 @@ impl Menu {
     pub fn prompt_output_path(&self, default_ext: &str) -> String {
         println!();
         let default = format!("report.{}", default_ext);
-        let input = self.read_input(&format!(
-            "  {} Output file [{}]: ",
-            "📄".to_string(),
-            default.dimmed()
-        ));
+        let input = self.read_input(&format!("  {} Output file [{}]: ", "📄", default.dimmed()));
 
         if input.is_empty() {
             default
@@ -640,7 +643,7 @@ impl Menu {
         };
         self.read_input(&format!(
             "  {} Enter {} (e.g., {}): ",
-            "🎯".to_string(),
+            "🎯",
             target_type,
             example.dimmed()
         ))
@@ -649,13 +652,13 @@ impl Menu {
     /// Prompt for scope name
     pub fn prompt_scope_name(&self) -> String {
         println!();
-        self.read_input(&format!("  {} Scope name: ", "📛".to_string()))
+        self.read_input(&format!("  {} Scope name: ", "📛"))
     }
 
     /// Prompt for scope description
     pub fn prompt_scope_description(&self) -> Option<String> {
         println!();
-        let input = self.read_input(&format!("  {} Description (optional): ", "📝".to_string()));
+        let input = self.read_input(&format!("  {} Description (optional): ", "📝"));
         if input.is_empty() {
             None
         } else {
@@ -668,7 +671,7 @@ impl Menu {
         println!();
         let input = self.read_input(&format!(
             "  {} Program name (optional, e.g., HackerOne-CompanyX): ",
-            "🏷️".to_string()
+            "🏷️"
         ));
         if input.is_empty() {
             None
@@ -680,12 +683,7 @@ impl Menu {
     /// Prompt for numeric value
     pub fn prompt_number(&self, prompt: &str, default: u32) -> u32 {
         println!();
-        let input = self.read_input(&format!(
-            "  {} {} [{}]: ",
-            "🔢".to_string(),
-            prompt,
-            default
-        ));
+        let input = self.read_input(&format!("  {} {} [{}]: ", "🔢", prompt, default));
         match input.parse::<u32>() {
             Ok(v) => v,
             Err(_) => {
@@ -698,12 +696,7 @@ impl Menu {
     /// Prompt for string value with default
     pub fn prompt_string(&self, prompt: &str, default: &str) -> String {
         println!();
-        let input = self.read_input(&format!(
-            "  {} {} [{}]: ",
-            "📝".to_string(),
-            prompt,
-            default.dimmed()
-        ));
+        let input = self.read_input(&format!("  {} {} [{}]: ", "📝", prompt, default.dimmed()));
         if input.is_empty() {
             default.to_string()
         } else {
@@ -766,15 +759,12 @@ impl Menu {
     }
 
     /// Show scope details
-    pub fn display_scope_details(
+    fn display_scope_details(
         &self,
         name: &str,
         description: Option<&str>,
         program: Option<&str>,
-        domains: &[String],
-        wildcards: &[String],
-        cidrs: &[String],
-        urls: &[String],
+        targets: ScopeTargets<'_>,
     ) {
         println!();
         println!("  {}", format!("Scope: {}", name).bold());
@@ -788,46 +778,46 @@ impl Menu {
         }
         println!();
 
-        if !domains.is_empty() {
-            println!("  {} Domains ({}):", "🌐".to_string(), domains.len());
-            for d in domains.iter().take(10) {
+        if !targets.domains.is_empty() {
+            println!("  🌐 Domains ({}):", targets.domains.len());
+            for d in targets.domains.iter().take(10) {
                 println!("     {}", d.green());
             }
-            if domains.len() > 10 {
-                println!("     {} ... and {} more", "".dimmed(), domains.len() - 10);
+            if targets.domains.len() > 10 {
+                println!("     ... and {} more", targets.domains.len() - 10);
             }
             println!();
         }
 
-        if !wildcards.is_empty() {
-            println!("  {} Wildcards ({}):", "✳️".to_string(), wildcards.len());
-            for w in wildcards.iter().take(10) {
+        if !targets.wildcards.is_empty() {
+            println!("  ✳️ Wildcards ({}):", targets.wildcards.len());
+            for w in targets.wildcards.iter().take(10) {
                 println!("     {}", w.green());
             }
-            if wildcards.len() > 10 {
-                println!("     {} ... and {} more", "".dimmed(), wildcards.len() - 10);
+            if targets.wildcards.len() > 10 {
+                println!("     ... and {} more", targets.wildcards.len() - 10);
             }
             println!();
         }
 
-        if !cidrs.is_empty() {
-            println!("  {} CIDR Ranges ({}):", "🔢".to_string(), cidrs.len());
-            for c in cidrs.iter().take(10) {
+        if !targets.cidrs.is_empty() {
+            println!("  🔢 CIDR Ranges ({}):", targets.cidrs.len());
+            for c in targets.cidrs.iter().take(10) {
                 println!("     {}", c.green());
             }
-            if cidrs.len() > 10 {
-                println!("     {} ... and {} more", "".dimmed(), cidrs.len() - 10);
+            if targets.cidrs.len() > 10 {
+                println!("     ... and {} more", targets.cidrs.len() - 10);
             }
             println!();
         }
 
-        if !urls.is_empty() {
-            println!("  {} URLs ({}):", "🔗".to_string(), urls.len());
-            for u in urls.iter().take(10) {
+        if !targets.urls.is_empty() {
+            println!("  🔗 URLs ({}):", targets.urls.len());
+            for u in targets.urls.iter().take(10) {
                 println!("     {}", u.green());
             }
-            if urls.len() > 10 {
-                println!("     {} ... and {} more", "".dimmed(), urls.len() - 10);
+            if targets.urls.len() > 10 {
+                println!("     ... and {} more", targets.urls.len() - 10);
             }
             println!();
         }
@@ -1054,7 +1044,7 @@ impl Menu {
                 }
                 MainMenuOption::Quit => {
                     self.print_banner();
-                    println!("  {} Goodbye!", "👋".to_string());
+                    println!("  👋 Goodbye!");
                     println!();
                     break;
                 }
@@ -1180,8 +1170,10 @@ impl Menu {
                                                 match storage
                                                     .list_findings(
                                                         None,
-                                                        Some(&scope_id),
-                                                        Some(&run_id),
+                                                        FindingContext {
+                                                            scope: Some(&scope_id),
+                                                            run: Some(&run_id),
+                                                        },
                                                         None,
                                                         None,
                                                         100,
@@ -1324,8 +1316,10 @@ impl Menu {
                                     let findings = storage
                                         .list_findings(
                                             None,
-                                            Some(&run.scope_id),
-                                            Some(&run.id),
+                                            FindingContext {
+                                                scope: Some(&run.scope_id),
+                                                run: Some(&run.id),
+                                            },
                                             None,
                                             None,
                                             100,
@@ -1520,8 +1514,10 @@ impl Menu {
                             let findings = storage
                                 .list_findings(
                                     None,
-                                    Some(&scope_id),
-                                    None,
+                                    FindingContext {
+                                        scope: Some(&scope_id),
+                                        run: None,
+                                    },
                                     Some("open".to_string()),
                                     None,
                                     200,
@@ -1858,10 +1854,12 @@ impl Menu {
                                         &scope.name,
                                         scope.description.as_deref(),
                                         scope.program.as_deref(),
-                                        &domains,
-                                        &wildcards,
-                                        &cidrs,
-                                        &urls,
+                                        ScopeTargets {
+                                            domains: &domains,
+                                            wildcards: &wildcards,
+                                            cidrs: &cidrs,
+                                            urls: &urls,
+                                        },
                                     );
                                 }
                                 Ok(None) => {
@@ -2000,7 +1998,17 @@ impl Menu {
 
         if let Some(ref storage) = self.storage {
             match storage
-                .list_findings(severity, None, None, None, None, 100, "severity")
+                .list_findings(
+                    severity,
+                    FindingContext {
+                        scope: None,
+                        run: None,
+                    },
+                    None,
+                    None,
+                    100,
+                    "severity",
+                )
                 .await
             {
                 Ok(findings) => {
@@ -2034,7 +2042,17 @@ impl Menu {
         if self.confirm(&format!("Generate {} report to {}?", format, output)) {
             if let Some(ref storage) = self.storage {
                 match storage
-                    .list_findings(None, None, None, None, None, 10_000, "date")
+                    .list_findings(
+                        None,
+                        FindingContext {
+                            scope: None,
+                            run: None,
+                        },
+                        None,
+                        None,
+                        10_000,
+                        "date",
+                    )
                     .await
                 {
                     Ok(findings) => {
