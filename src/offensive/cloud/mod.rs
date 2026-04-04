@@ -262,11 +262,12 @@ impl CloudExposureEngine {
         let now = Utc::now().to_rfc3339();
 
         let db_finding = Finding {
-            id: format!(
-                "cloud-{}-{}-{}",
-                finding.provider,
-                finding.resource_type,
-                sha256_short(&finding.resource_name)
+            id: self.run_scoped_id(
+                "cloud",
+                &format!(
+                    "{}-{}-{}",
+                    finding.provider, finding.resource_type, finding.resource_name
+                ),
             ),
             scope_id: self.scope.id.clone(),
             run_id: self.run_id.clone(),
@@ -310,7 +311,7 @@ impl CloudExposureEngine {
             .unwrap_or_else(|| "Repository is publicly accessible".to_string());
 
         let db_finding = Finding {
-            id: format!("repo-exposure-{}", sha256_short(&finding.url)),
+            id: self.run_scoped_id("repo-exposure", &finding.url),
             scope_id: self.scope.id.clone(),
             run_id: self.run_id.clone(),
             asset: finding.url.clone(),
@@ -341,6 +342,14 @@ impl CloudExposureEngine {
         };
 
         self.storage.save_finding(&db_finding).await
+    }
+
+    fn run_scoped_id(&self, prefix: &str, key: &str) -> String {
+        if let Some(run_id) = self.run_id.as_deref() {
+            format!("{}-{}-{}", prefix, sha256_short(run_id), sha256_short(key))
+        } else {
+            format!("{}-{}", prefix, sha256_short(key))
+        }
     }
 }
 

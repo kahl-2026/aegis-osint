@@ -152,6 +152,20 @@ impl DiscoveryEngine {
         Ok(result)
     }
 
+    /// Resolve TXT records for a target host (e.g., _dmarc.example.com)
+    pub async fn lookup_txt_records(&self, target: &str) -> Result<Vec<String>> {
+        let mut records = Vec::new();
+        self.policy.wait_for_rate_limit().await;
+
+        if let Ok(response) = self.resolver.txt_lookup(target).await {
+            for record in response.iter() {
+                records.push(record.to_string());
+            }
+        }
+
+        Ok(records)
+    }
+
     /// Aggressive subdomain permutation checks for common hostnames
     pub async fn discover_common_subdomains(
         &self,

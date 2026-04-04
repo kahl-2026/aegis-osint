@@ -11,7 +11,7 @@ use crate::scope::Scope;
 use crate::storage::{Evidence, Finding, Storage};
 use anyhow::Result;
 use chrono::Utc;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Web reconnaissance engine
 pub struct WebReconEngine {
@@ -223,7 +223,64 @@ impl WebReconEngine {
         endpoints.sort_by(|a, b| a.path.cmp(&b.path));
         endpoints.dedup_by(|a, b| a.path == b.path);
 
+        if !endpoints.is_empty() {
+            self.save_endpoint_summary_finding(url, &endpoints).await?;
+        }
+
         Ok(endpoints)
+    }
+
+    /// Check for risky HTTP methods advertised by target
+    pub async fn check_http_methods(&self, url: &str, aggressive: bool) -> Result<usize> {
+        let parsed = url::Url::parse(url)?;
+        let host = parsed.host_str().unwrap_or("");
+        let check = self.policy.check_target(host, &self.scope).await?;
+        if !check.allowed {
+            return Ok(0);
+        }
+
+        let mut seen = HashSet::new();
+        for candidate_url in self.candidate_urls(url) {
+            self.policy.wait_for_rate_limit().await;
+            if let Ok(response) = self
+                .client
+                .request(reqwest::Method::OPTIONS, &candidate_url)
+                .send()
+                .await
+            {
+                if !response.status().is_success() {
+                    continue;
+                }
+                if let Some(allow) = response.headers().get("allow") {
+                    if let Ok(allow_str) = allow.to_str() {
+                        let methods: Vec<String> = allow_str
+                            .split(',')
+                            .map(|m| m.trim().to_ascii_uppercase())
+                            .filter(|m| !m.is_empty())
+                            .collect();
+                        let mut risky = methods
+                            .iter()
+                            .filter(|m| {
+                                matches!(m.as_str(), "PUT" | "DELETE" | "TRACE" | "CONNECT")
+                            })
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        if aggressive && methods.iter().any(|m| m == "PATCH") {
+                            risky.push("PATCH".to_string());
+                        }
+                        risky.sort();
+                        risky.dedup();
+
+                        if !risky.is_empty() && seen.insert(candidate_url.clone()) {
+                            self.save_http_methods_finding(&candidate_url, &risky)
+                                .await?;
+                            return Ok(1);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(0)
     }
 
     /// Check for common misconfigurations
@@ -405,7 +462,7 @@ impl WebReconEngine {
         // Generate findings for missing security headers
         if !result.missing_security_headers.is_empty() {
             let finding = Finding {
-                id: format!("header-missing-{}", sha256_short(url)),
+                id: self.run_scoped_id("header-missing", url),
                 scope_id: self.scope.id.clone(),
                 run_id: self.run_id.clone(),
                 asset: url.to_string(),
@@ -440,11 +497,7 @@ impl WebReconEngine {
         // Generate findings for misconfigured headers
         for issue in &result.misconfigured_headers {
             let finding = Finding {
-                id: format!(
-                    "header-misconfig-{}-{}",
-                    sha256_short(&issue.header),
-                    sha256_short(url)
-                ),
+                id: self.run_scoped_id("header-misconfig", &format!("{}-{}", issue.header, url)),
                 scope_id: self.scope.id.clone(),
                 run_id: self.run_id.clone(),
                 asset: url.to_string(),
@@ -480,10 +533,9 @@ impl WebReconEngine {
     async fn save_misconfig_finding(&self, finding: &MisconfigFinding) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         let db_finding = Finding {
-            id: format!(
-                "misconfig-{}-{}",
-                sha256_short(&finding.url),
-                sha256_short(&finding.description)
+            id: self.run_scoped_id(
+                "misconfig",
+                &format!("{}-{}", finding.url, finding.description),
             ),
             scope_id: self.scope.id.clone(),
             run_id: self.run_id.clone(),
@@ -510,6 +562,91 @@ impl WebReconEngine {
             updated_at: now,
         };
         self.storage.save_finding(&db_finding).await
+    }
+
+    async fn save_endpoint_summary_finding(
+        &self,
+        url: &str,
+        endpoints: &[DiscoveredEndpoint],
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let sample = endpoints
+            .iter()
+            .take(10)
+            .map(|endpoint| endpoint.path.clone())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let finding = Finding {
+            id: self.run_scoped_id("js-endpoints", url),
+            scope_id: self.scope.id.clone(),
+            run_id: self.run_id.clone(),
+            asset: url.to_string(),
+            finding_type: "js-endpoint-discovery".to_string(),
+            title: format!("Discovered JavaScript endpoints ({})", endpoints.len()),
+            description: format!("Discovered endpoint patterns: {}", sample),
+            impact:
+                "Exposed endpoints can expand attack surface and reveal internal API structure."
+                    .to_string(),
+            severity: "low".to_string(),
+            confidence: 80,
+            status: Some("open".to_string()),
+            reproduction: Some(format!("Review JavaScript files under {}", url)),
+            source: "web-recon".to_string(),
+            method: "js-endpoint-extraction".to_string(),
+            scope_verified: true,
+            evidence: vec![Evidence {
+                description: "Extracted endpoint paths".to_string(),
+                source: "js-analysis".to_string(),
+                data: Some(sample),
+                timestamp: now.clone(),
+            }],
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        self.storage.save_finding(&finding).await
+    }
+
+    async fn save_http_methods_finding(&self, url: &str, methods: &[String]) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let finding = Finding {
+            id: self.run_scoped_id("http-methods", url),
+            scope_id: self.scope.id.clone(),
+            run_id: self.run_id.clone(),
+            asset: url.to_string(),
+            finding_type: "http-method-exposure".to_string(),
+            title: "Potentially risky HTTP methods enabled".to_string(),
+            description: format!(
+                "Endpoint advertises potentially risky methods: {}",
+                methods.join(", ")
+            ),
+            impact: "Risky methods may enable content tampering, tracing, or unintended actions."
+                .to_string(),
+            severity: "medium".to_string(),
+            confidence: 85,
+            status: Some("open".to_string()),
+            reproduction: Some(format!("curl -i -X OPTIONS {}", url)),
+            source: "web-recon".to_string(),
+            method: "http-options".to_string(),
+            scope_verified: true,
+            evidence: vec![Evidence {
+                description: "Allowed methods".to_string(),
+                source: "http-options".to_string(),
+                data: Some(methods.join(",")),
+                timestamp: now.clone(),
+            }],
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.storage.save_finding(&finding).await
+    }
+
+    fn run_scoped_id(&self, prefix: &str, key: &str) -> String {
+        if let Some(run_id) = self.run_id.as_deref() {
+            format!("{}-{}-{}", prefix, sha256_short(run_id), sha256_short(key))
+        } else {
+            format!("{}-{}", prefix, sha256_short(key))
+        }
     }
 }
 

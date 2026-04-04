@@ -8,6 +8,7 @@ use crate::scope::Scope;
 use crate::storage::{Finding, FindingContext, ScanSummary, Storage};
 use anyhow::Result;
 use chrono::Utc;
+use std::collections::HashSet;
 use std::time::Instant;
 
 use super::cloud::CloudExposureEngine;
@@ -30,9 +31,13 @@ struct OffensiveRunMetrics {
     ct_subdomains: usize,
     dns_records: usize,
     aggressive_subdomains: usize,
+    dns_posture_findings: usize,
+    asn_mappings: usize,
     service_fingerprints: usize,
     header_issues: usize,
     misconfigs: usize,
+    method_findings: usize,
+    js_endpoints: usize,
     cloud_exposures: usize,
     related_domains: usize,
     timeline_events: usize,
@@ -78,7 +83,7 @@ impl OffensiveOrchestrator {
         // Phase 2: DNS Enumeration
         progress_callback("DNS Enumeration", 25);
         let dns_assets = self
-            .run_dns_discovery(&mut metrics, self.is_aggressive())
+            .run_dns_discovery(run_id, &mut metrics, self.is_aggressive())
             .await?;
         total_assets += dns_assets;
 
@@ -182,6 +187,7 @@ impl OffensiveOrchestrator {
 
     async fn run_dns_discovery(
         &self,
+        run_id: &str,
         metrics: &mut OffensiveRunMetrics,
         aggressive: bool,
     ) -> Result<usize> {
@@ -226,6 +232,8 @@ impl OffensiveOrchestrator {
                                     }
                                 }
                             }
+                            self.analyze_dns_posture(run_id, &domain, &result, &discovery, metrics)
+                                .await?;
                         }
                         Err(e) => {
                             tracing::warn!("DNS discovery failed for {}: {}", domain, e);
@@ -268,6 +276,178 @@ impl OffensiveOrchestrator {
         Ok(fingerprinted)
     }
 
+    async fn analyze_dns_posture(
+        &self,
+        run_id: &str,
+        domain: &str,
+        result: &super::discovery::DnsDiscoveryResult,
+        discovery: &DiscoveryEngine,
+        metrics: &mut OffensiveRunMetrics,
+    ) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let spf_records: Vec<&String> = result
+            .txt_records
+            .iter()
+            .filter(|value| value.to_ascii_lowercase().contains("v=spf1"))
+            .collect();
+
+        if spf_records.is_empty() {
+            let finding = Finding {
+                id: self.run_scoped_id("dns-missing-spf", domain, run_id),
+                scope_id: self.scope.id.clone(),
+                run_id: Some(run_id.to_string()),
+                asset: domain.to_string(),
+                finding_type: "dns-posture".to_string(),
+                title: "Missing SPF policy".to_string(),
+                description: format!("No SPF TXT record detected for {}", domain),
+                impact: "Missing SPF can increase email spoofing risk for the domain.".to_string(),
+                severity: "low".to_string(),
+                confidence: 80,
+                status: Some("open".to_string()),
+                reproduction: Some(format!("dig +short TXT {}", domain)),
+                source: "dns-discovery".to_string(),
+                method: "spf-check".to_string(),
+                scope_verified: true,
+                evidence: vec![],
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            };
+            self.storage.save_finding(&finding).await?;
+            metrics.dns_posture_findings += 1;
+        } else if spf_records
+            .iter()
+            .any(|value| value.to_ascii_lowercase().contains("+all"))
+        {
+            let finding = Finding {
+                id: self.run_scoped_id("dns-spf-permissive", domain, run_id),
+                scope_id: self.scope.id.clone(),
+                run_id: Some(run_id.to_string()),
+                asset: domain.to_string(),
+                finding_type: "dns-posture".to_string(),
+                title: "Permissive SPF policy detected".to_string(),
+                description: format!(
+                    "SPF policy for {} contains '+all', which is overly permissive.",
+                    domain
+                ),
+                impact: "Overly permissive SPF can allow unauthorized email sources.".to_string(),
+                severity: "medium".to_string(),
+                confidence: 85,
+                status: Some("open".to_string()),
+                reproduction: Some(format!("dig +short TXT {}", domain)),
+                source: "dns-discovery".to_string(),
+                method: "spf-check".to_string(),
+                scope_verified: true,
+                evidence: vec![],
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            };
+            self.storage.save_finding(&finding).await?;
+            metrics.dns_posture_findings += 1;
+        }
+
+        let dmarc_host = format!("_dmarc.{}", domain);
+        let dmarc_records = discovery.lookup_txt_records(&dmarc_host).await?;
+        if dmarc_records.is_empty() {
+            let finding = Finding {
+                id: self.run_scoped_id("dns-missing-dmarc", domain, run_id),
+                scope_id: self.scope.id.clone(),
+                run_id: Some(run_id.to_string()),
+                asset: domain.to_string(),
+                finding_type: "dns-posture".to_string(),
+                title: "Missing DMARC policy".to_string(),
+                description: format!("No DMARC TXT record detected at {}", dmarc_host),
+                impact: "Missing DMARC weakens anti-spoofing protections.".to_string(),
+                severity: "low".to_string(),
+                confidence: 82,
+                status: Some("open".to_string()),
+                reproduction: Some(format!("dig +short TXT {}", dmarc_host)),
+                source: "dns-discovery".to_string(),
+                method: "dmarc-check".to_string(),
+                scope_verified: true,
+                evidence: vec![],
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            };
+            self.storage.save_finding(&finding).await?;
+            metrics.dns_posture_findings += 1;
+        } else if dmarc_records
+            .iter()
+            .any(|value| value.to_ascii_lowercase().contains("p=none"))
+        {
+            let finding = Finding {
+                id: self.run_scoped_id("dns-dmarc-none", domain, run_id),
+                scope_id: self.scope.id.clone(),
+                run_id: Some(run_id.to_string()),
+                asset: domain.to_string(),
+                finding_type: "dns-posture".to_string(),
+                title: "DMARC policy is monitor-only".to_string(),
+                description: format!("DMARC policy for {} is set to p=none.", domain),
+                impact: "Monitor-only DMARC may not block spoofed mail attempts.".to_string(),
+                severity: "low".to_string(),
+                confidence: 78,
+                status: Some("open".to_string()),
+                reproduction: Some(format!("dig +short TXT {}", dmarc_host)),
+                source: "dns-discovery".to_string(),
+                method: "dmarc-check".to_string(),
+                scope_verified: true,
+                evidence: vec![],
+                created_at: now.clone(),
+                updated_at: now.clone(),
+            };
+            self.storage.save_finding(&finding).await?;
+            metrics.dns_posture_findings += 1;
+        }
+
+        if matches!(
+            self.profile,
+            ScanProfile::Thorough | ScanProfile::Aggressive
+        ) {
+            let mut asn_set = HashSet::new();
+            for ip in result.a_records.iter().take(16) {
+                if let Some(asn_info) = discovery.discover_asn(ip).await? {
+                    asn_set.insert(format!(
+                        "{} ({}, {})",
+                        asn_info.asn, asn_info.prefix, asn_info.country
+                    ));
+                }
+            }
+
+            if !asn_set.is_empty() {
+                let mut values = asn_set.into_iter().collect::<Vec<_>>();
+                values.sort();
+                let finding = Finding {
+                    id: self.run_scoped_id("dns-asn-map", domain, run_id),
+                    scope_id: self.scope.id.clone(),
+                    run_id: Some(run_id.to_string()),
+                    asset: domain.to_string(),
+                    finding_type: "dns-infrastructure".to_string(),
+                    title: "ASN infrastructure mapping discovered".to_string(),
+                    description: format!(
+                        "Resolved {} ASN mappings for {}: {}",
+                        values.len(),
+                        domain,
+                        values.join("; ")
+                    ),
+                    impact: "Infrastructure mapping helps identify shared hosting and third-party dependencies.".to_string(),
+                    severity: "info".to_string(),
+                    confidence: 75,
+                    status: Some("open".to_string()),
+                    reproduction: Some(format!("dig +short A {}", domain)),
+                    source: "dns-discovery".to_string(),
+                    method: "asn-lookup".to_string(),
+                    scope_verified: true,
+                    evidence: vec![],
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                };
+                self.storage.save_finding(&finding).await?;
+                metrics.asn_mappings += values.len();
+            }
+        }
+
+        Ok(())
+    }
+
     async fn run_web_recon(&self, run_id: &str, metrics: &mut OffensiveRunMetrics) -> Result<()> {
         let web_engine = WebReconEngine::new(
             self.scope.clone(),
@@ -305,8 +485,21 @@ impl OffensiveOrchestrator {
                     }
                 }
 
-                if let Err(e) = web_engine.discover_js_endpoints(&url).await {
-                    tracing::warn!("JS endpoint discovery failed for {}: {}", url, e);
+                if !matches!(self.profile, ScanProfile::Safe) {
+                    match web_engine
+                        .check_http_methods(&url, self.is_aggressive())
+                        .await
+                    {
+                        Ok(count) => metrics.method_findings += count,
+                        Err(e) => tracing::warn!("HTTP method checks failed for {}: {}", url, e),
+                    }
+                }
+
+                match web_engine.discover_js_endpoints(&url).await {
+                    Ok(endpoints) => metrics.js_endpoints += endpoints.len(),
+                    Err(e) => {
+                        tracing::warn!("JS endpoint discovery failed for {}: {}", url, e);
+                    }
                 }
             }
         }
@@ -322,10 +515,7 @@ impl OffensiveOrchestrator {
             Some(run_id),
         )?;
 
-        // Extract org name from scope
-        if let Some(org) = self.scope.program.as_ref() {
-            let org_name = org.to_lowercase().replace(' ', "-");
-
+        for org_name in self.cloud_org_candidates() {
             // Check cloud providers
             match cloud_engine.check_s3_exposure(&org_name).await {
                 Ok(s3_findings) => {
@@ -453,6 +643,54 @@ impl OffensiveOrchestrator {
         }
     }
 
+    fn cloud_org_candidates(&self) -> Vec<String> {
+        let mut seen = HashSet::new();
+        let mut candidates = Vec::new();
+
+        let mut push_candidate = |raw: &str| {
+            let normalized = Self::normalize_org_candidate(raw);
+            if !normalized.is_empty() && seen.insert(normalized.clone()) {
+                candidates.push(normalized);
+            }
+        };
+
+        if let Some(program) = self.scope.program.as_ref() {
+            push_candidate(program);
+        }
+        push_candidate(&self.scope.name);
+
+        for item in &self.scope.items {
+            if !item.in_scope {
+                continue;
+            }
+            if let Some(domain) = self.extract_base_domain(&item.value) {
+                let first_label = domain.split('.').next().unwrap_or_default();
+                push_candidate(first_label);
+            }
+        }
+
+        candidates.into_iter().take(6).collect()
+    }
+
+    fn normalize_org_candidate(value: &str) -> String {
+        value
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .trim_matches('-')
+            .replace("--", "-")
+    }
+
+    fn run_scoped_id(&self, prefix: &str, key: &str, run_id: &str) -> String {
+        format!("{}-{}-{}", prefix, sha256_short(run_id), sha256_short(key))
+    }
+
     async fn save_run_summary_finding(
         &self,
         run_id: &str,
@@ -460,13 +698,17 @@ impl OffensiveOrchestrator {
     ) -> Result<()> {
         let now = Utc::now().to_rfc3339();
         let description = format!(
-            "CT subdomains: {}; DNS records: {}; Aggressive subdomains: {}; Service fingerprints: {}; Header findings: {}; Misconfigs: {}; Cloud exposures: {}; Related domains: {}; Timeline events: {}",
+            "CT subdomains: {}; DNS records: {}; Aggressive subdomains: {}; DNS posture findings: {}; ASN mappings: {}; Service fingerprints: {}; Header findings: {}; Misconfigs: {}; HTTP method findings: {}; JS endpoints: {}; Cloud exposures: {}; Related domains: {}; Timeline events: {}",
             metrics.ct_subdomains,
             metrics.dns_records,
             metrics.aggressive_subdomains,
+            metrics.dns_posture_findings,
+            metrics.asn_mappings,
             metrics.service_fingerprints,
             metrics.header_issues,
             metrics.misconfigs,
+            metrics.method_findings,
+            metrics.js_endpoints,
             metrics.cloud_exposures,
             metrics.related_domains,
             metrics.timeline_events
@@ -495,4 +737,10 @@ impl OffensiveOrchestrator {
 
         self.storage.save_finding(&finding).await
     }
+}
+
+fn sha256_short(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(input.as_bytes());
+    format!("{:x}", hash)[..12].to_string()
 }
