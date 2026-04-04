@@ -18,11 +18,17 @@ pub struct CloudExposureEngine {
     policy: PolicyEngine,
     storage: Storage,
     client: reqwest::Client,
+    run_id: Option<String>,
 }
 
 impl CloudExposureEngine {
     /// Create a new cloud exposure engine
-    pub fn new(scope: Scope, policy: PolicyEngine, storage: Storage) -> Result<Self> {
+    pub fn new(
+        scope: Scope,
+        policy: PolicyEngine,
+        storage: Storage,
+        run_id: Option<&str>,
+    ) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(15))
             .build()?;
@@ -32,6 +38,7 @@ impl CloudExposureEngine {
             policy,
             storage,
             client,
+            run_id: run_id.map(str::to_string),
         })
     }
 
@@ -262,7 +269,7 @@ impl CloudExposureEngine {
                 sha256_short(&finding.resource_name)
             ),
             scope_id: self.scope.id.clone(),
-            run_id: None,
+            run_id: self.run_id.clone(),
             asset: finding.url.clone(),
             finding_type: "cloud-exposure".to_string(),
             title: format!("{} {} Exposure", finding.provider.to_uppercase(), finding.resource_type),
@@ -305,7 +312,7 @@ impl CloudExposureEngine {
         let db_finding = Finding {
             id: format!("repo-exposure-{}", sha256_short(&finding.url)),
             scope_id: self.scope.id.clone(),
-            run_id: None,
+            run_id: self.run_id.clone(),
             asset: finding.url.clone(),
             finding_type: "repo-exposure".to_string(),
             title,

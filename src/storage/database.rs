@@ -896,7 +896,7 @@ impl Storage {
         }
 
         let order = match sort {
-            "severity" => "CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END",
+            "severity" => "CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END, created_at DESC",
             "confidence" => "confidence DESC",
             "date" => "created_at DESC",
             _ => "created_at DESC",

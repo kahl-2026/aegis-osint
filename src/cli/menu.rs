@@ -115,7 +115,7 @@ pub struct Menu {
 impl Menu {
     pub fn new() -> Self {
         Self {
-            width: 60,
+            width: 96,
             storage: None,
             config: None,
         }
@@ -124,7 +124,7 @@ impl Menu {
     /// Create menu with storage and config
     pub fn with_storage_and_config(storage: Storage, config: Config) -> Self {
         Self {
-            width: 60,
+            width: 96,
             storage: Some(storage),
             config: Some(config),
         }
@@ -151,12 +151,6 @@ impl Menu {
         }
     }
 
-    /// Print centered text
-    fn center(&self, text: &str) -> String {
-        let padding = (self.width.saturating_sub(text.len())) / 2;
-        format!("{:padding$}{}", "", text, padding = padding)
-    }
-
     /// Print a horizontal line
     fn line(&self) -> String {
         "─".repeat(self.width)
@@ -165,29 +159,23 @@ impl Menu {
     /// Print the banner
     pub fn print_banner(&self) {
         self.clear();
-        let version_line = format!(
-            "║            AegisOSINT v{}              ║",
-            env!("CARGO_PKG_VERSION")
-        );
+        let now = Utc::now().format("%Y-%m-%d %H:%M UTC");
+        let db_status = if self.storage.is_some() {
+            "db:connected".green().bold()
+        } else {
+            "db:offline".yellow().bold()
+        };
         println!();
         println!(
-            "{}",
-            self.center("╔═══════════════════════════════════════════╗")
+            "  {}  {}  {}  {}",
+            format!("AegisOSINT v{}", env!("CARGO_PKG_VERSION"))
                 .cyan()
+                .bold(),
+            "AUTHORIZED USE ONLY".yellow().bold(),
+            db_status,
+            now.to_string().dimmed()
         );
-        println!("{}", self.center(&version_line).cyan());
-        println!(
-            "{}",
-            self.center("║   Production OSINT for Bug Bounty & Defense  ║")
-                .cyan()
-        );
-        println!(
-            "{}",
-            self.center("╚═══════════════════════════════════════════╝")
-                .cyan()
-        );
-        println!();
-        println!("{}", self.center("⚠️  AUTHORIZED USE ONLY").yellow().bold());
+        println!("  {}", self.line().dimmed());
         println!();
     }
 
@@ -255,9 +243,14 @@ impl Menu {
                     .constraints([
                         Constraint::Length(3),
                         Constraint::Min(1),
-                        Constraint::Length(2),
+                        Constraint::Length(4),
                     ])
                     .split(area);
+
+                let main_chunks = Layout::default()
+                    .direction(Direction::Horizontal)
+                    .constraints([Constraint::Percentage(62), Constraint::Percentage(38)])
+                    .split(chunks[1]);
 
                 let header = Paragraph::new(Line::from(vec![
                     Span::styled(
@@ -294,7 +287,7 @@ impl Menu {
                     .block(
                         Block::default()
                             .borders(Borders::ALL)
-                            .title("Menu")
+                            .title("Actions")
                             .border_style(Style::default().fg(Color::DarkGray)),
                     )
                     .highlight_style(
@@ -304,15 +297,56 @@ impl Menu {
                             .add_modifier(Modifier::BOLD),
                     )
                     .highlight_symbol(" ");
-                frame.render_stateful_widget(list, chunks[1], &mut list_state);
+                frame.render_stateful_widget(list, main_chunks[0], &mut list_state);
 
-                let footer = Paragraph::new(" ↑/↓ move  Enter select  Esc cancel ")
-                    .style(Style::default().fg(Color::Gray))
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(Color::DarkGray)),
-                    );
+                let details = Self::menu_item_details(
+                    items.get(selected).map(String::as_str).unwrap_or_default(),
+                );
+                let details_panel = Paragraph::new(vec![
+                    Line::from(Span::styled(
+                        "Selection",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(Span::raw(format!("{} of {}", selected + 1, items.len()))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Details",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(details),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "Tips",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from("• Use j/k or arrows to move"),
+                    Line::from("• Enter opens selected action"),
+                    Line::from("• Esc or q returns/cancels"),
+                ])
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Context")
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                );
+                frame.render_widget(details_panel, main_chunks[1]);
+
+                let footer = Paragraph::new(vec![
+                    Line::from(" ↑/↓ move  Enter select  Esc cancel "),
+                    Line::from(" Profiles: safe | standard | thorough | aggressive "),
+                ])
+                .style(Style::default().fg(Color::Gray))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                );
                 frame.render_widget(footer, chunks[2]);
             })?;
 
@@ -350,6 +384,30 @@ impl Menu {
             KeyCode::Enter => NavigationKey::Confirm,
             KeyCode::Esc | KeyCode::Char('q') => NavigationKey::Cancel,
             _ => NavigationKey::None,
+        }
+    }
+
+    fn menu_item_details(item: &str) -> &'static str {
+        if item.contains("Offensive Recon") {
+            "Run authorized recon scans and inspect detailed findings."
+        } else if item.contains("Defensive Monitor") {
+            "Monitor external surface changes, drift, and alerting status."
+        } else if item.contains("Manage Scopes") {
+            "Create/import scope definitions and validate targets."
+        } else if item.contains("View Findings") {
+            "Browse findings with severity grouping and verification workflows."
+        } else if item.contains("Generate Reports") {
+            "Export JSON/Markdown/HTML/Bounty reports from findings."
+        } else if item.contains("Manage Assets") {
+            "Inspect discovered domains, IPs, and service inventory."
+        } else if item.contains("Settings") {
+            "Tune rate-limits, timeout, user-agent, and database settings."
+        } else if item.contains("Help") {
+            "Read usage guidance and legal/safety reminders."
+        } else if item.contains("Quit") {
+            "Exit the interactive interface."
+        } else {
+            "Select an action to continue."
         }
     }
 
@@ -509,6 +567,7 @@ impl Menu {
         println!();
         println!("    aegis scope import --file scope.yaml");
         println!("    aegis offensive run --scope <id> --profile safe");
+        println!("    aegis offensive run --scope <id> --profile aggressive");
         println!("    aegis defensive monitor --scope <id>");
         println!("    aegis findings list --severity high");
         println!("    aegis report export --format md");
@@ -557,9 +616,13 @@ impl Menu {
         let options = [
             "safe — Passive only, minimal requests",
             "standard — Balanced recon with rate limiting",
+            "thorough — Deep recon with broader correlation",
+            "aggressive — Expanded active probing (opt-in)",
         ];
         match self.select_index("Select profile", &options, 0) {
             1 => "standard".to_string(),
+            2 => "thorough".to_string(),
+            3 => "aggressive".to_string(),
             _ => "safe".to_string(),
         }
     }
@@ -871,9 +934,57 @@ impl Menu {
 
     /// Show a table of findings
     pub fn show_findings_table(&self, findings: &[(String, String, String, String)]) {
+        const PAGE_SIZE: usize = 20;
+        if findings.is_empty() {
+            self.show_info("No findings to display");
+            return;
+        }
+
         println!();
-        println!("  {}", "Findings:".bold());
+        println!(
+            "  {} {}",
+            "Findings total:".bold(),
+            findings.len().to_string().cyan()
+        );
         println!("  {}", self.line().dimmed());
+
+        for severity in ["critical", "high", "medium", "low", "info"] {
+            let bucket: Vec<&(String, String, String, String)> = findings
+                .iter()
+                .filter(|(_, sev, _, _)| sev.eq_ignore_ascii_case(severity))
+                .collect();
+
+            if bucket.is_empty() {
+                continue;
+            }
+
+            let pages = bucket.len().div_ceil(PAGE_SIZE);
+            for (page_idx, chunk) in bucket.chunks(PAGE_SIZE).enumerate() {
+                println!();
+                println!(
+                    "  {} {} ({}/{})",
+                    "Severity:".bold(),
+                    Self::severity_label(severity),
+                    page_idx + 1,
+                    pages
+                );
+                self.render_findings_rows(chunk);
+
+                if page_idx + 1 < pages {
+                    let input = self
+                        .read_input("  → Enter for next page, q to stop paging this severity: ");
+                    if matches!(input.trim().to_ascii_lowercase().as_str(), "q" | "quit") {
+                        break;
+                    }
+                }
+            }
+        }
+
+        println!("  {}", self.line().dimmed());
+        println!();
+    }
+
+    fn render_findings_rows(&self, findings: &[&(String, String, String, String)]) {
         println!(
             "  {:8} {:12} {:34} {}",
             "ID".bold(),
@@ -884,14 +995,6 @@ impl Menu {
         println!("  {}", self.line().dimmed());
 
         for (id, severity, finding_type, target) in findings {
-            let severity_colored = match severity.as_str() {
-                "critical" => severity.red().bold().to_string(),
-                "high" => severity.red().to_string(),
-                "medium" => severity.yellow().to_string(),
-                "low" => severity.green().to_string(),
-                _ => severity.blue().to_string(),
-            };
-
             let short_id = Self::truncate_chars(id, 8);
             let short_title = Self::truncate_chars(finding_type, 34);
             let short_target = Self::truncate_chars(target, 22);
@@ -899,14 +1002,21 @@ impl Menu {
             println!(
                 "  {:8} {:12} {:34} {}",
                 short_id.dimmed(),
-                severity_colored,
+                Self::severity_label(severity),
                 short_title,
                 short_target
             );
         }
+    }
 
-        println!("  {}", self.line().dimmed());
-        println!();
+    fn severity_label(severity: &str) -> String {
+        match severity {
+            "critical" => severity.red().bold().to_string(),
+            "high" => severity.red().to_string(),
+            "medium" => severity.yellow().to_string(),
+            "low" => severity.green().to_string(),
+            _ => severity.blue().to_string(),
+        }
     }
 
     fn severity_rank(severity: &str) -> usize {
@@ -1066,6 +1176,8 @@ impl Menu {
                         let profile_str = self.prompt_profile();
                         let profile = match profile_str.as_str() {
                             "standard" => ScanProfile::Standard,
+                            "thorough" => ScanProfile::Thorough,
+                            "aggressive" => ScanProfile::Aggressive,
                             _ => ScanProfile::Safe,
                         };
 
@@ -1176,7 +1288,7 @@ impl Menu {
                                                         },
                                                         None,
                                                         None,
-                                                        100,
+                                                        10_000,
                                                         "severity",
                                                     )
                                                     .await
@@ -1322,7 +1434,7 @@ impl Menu {
                                             },
                                             None,
                                             None,
-                                            100,
+                                            10_000,
                                             "severity",
                                         )
                                         .await?;
@@ -2006,7 +2118,7 @@ impl Menu {
                     },
                     None,
                     None,
-                    100,
+                    10_000,
                     "severity",
                 )
                 .await
@@ -2399,5 +2511,17 @@ mod tests {
         options.push("↩ Cancel".to_string());
         assert_eq!(options.last().map(String::as_str), Some("↩ Cancel"));
         assert!(menu.width > 0);
+    }
+
+    #[test]
+    fn test_menu_item_details_have_useful_text() {
+        let detail = Menu::menu_item_details("🔍 View Findings — Browse and verify discoveries");
+        assert!(detail.contains("findings"));
+    }
+
+    #[test]
+    fn test_severity_label_retains_text() {
+        assert!(Menu::severity_label("critical").contains("critical"));
+        assert!(Menu::severity_label("info").contains("info"));
     }
 }

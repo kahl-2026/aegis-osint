@@ -32,6 +32,8 @@ pub enum ScanProfile {
     Standard,
     /// Thorough mode - comprehensive but slower
     Thorough,
+    /// Aggressive mode - expanded active probing within policy controls
+    Aggressive,
 }
 
 #[derive(Args, Debug)]
@@ -44,7 +46,7 @@ pub struct OffensiveRunArgs {
     #[arg(short, long)]
     pub scope: Option<String>,
 
-    /// Scan profile (safe, standard, thorough)
+    /// Scan profile (safe, standard, thorough, aggressive)
     #[arg(long, value_enum, default_value = "safe")]
     pub profile: ScanProfile,
 
@@ -245,14 +247,29 @@ impl OffensiveCommand {
                         },
                         None,
                         None,
-                        10,
+                        10_000,
                         "severity",
                     )
                     .await
                 {
                     if !recent.is_empty() {
-                        println!("{}", "Top findings from this run:".bold());
-                        for f in recent {
+                        println!("{}", "Findings from this run:".bold());
+                        let mut severity_totals = std::collections::BTreeMap::new();
+                        for finding in &recent {
+                            *severity_totals
+                                .entry(finding.severity.as_str())
+                                .or_insert(0usize) += 1;
+                        }
+                        println!(
+                            "  critical={} high={} medium={} low={} info={}",
+                            severity_totals.get("critical").copied().unwrap_or(0),
+                            severity_totals.get("high").copied().unwrap_or(0),
+                            severity_totals.get("medium").copied().unwrap_or(0),
+                            severity_totals.get("low").copied().unwrap_or(0),
+                            severity_totals.get("info").copied().unwrap_or(0)
+                        );
+                        println!();
+                        for f in recent.iter().take(25) {
                             let sev = match f.severity.as_str() {
                                 "critical" => f.severity.red().bold().to_string(),
                                 "high" => f.severity.red().to_string(),
@@ -266,6 +283,13 @@ impl OffensiveCommand {
                                 sev,
                                 f.title,
                                 f.asset.dimmed()
+                            );
+                        }
+                        if recent.len() > 25 {
+                            println!(
+                                "  {} Showing first 25 of {} findings",
+                                "…".yellow(),
+                                recent.len()
                             );
                         }
                         println!();
@@ -334,6 +358,20 @@ impl OffensiveCommand {
         if args.verbose {
             println!("  Modules:");
             for module in Self::get_modules_for_profile(ScanProfile::Thorough) {
+                println!("    • {}", module);
+            }
+        }
+        println!();
+
+        println!("{}", "aggressive".red().bold());
+        println!("  High-depth active recon (explicit opt-in)");
+        println!(
+            "  {} All thorough + expanded probing and enumeration",
+            "Includes:".bold()
+        );
+        if args.verbose {
+            println!("  Modules:");
+            for module in Self::get_modules_for_profile(ScanProfile::Aggressive) {
                 println!("    • {}", module);
             }
         }
@@ -431,6 +469,34 @@ impl OffensiveCommand {
                 "tech-fingerprint",
                 "repo-scan",
             ],
+            ScanProfile::Aggressive => vec![
+                "ct-logs",
+                "dns-records",
+                "whois",
+                "public-metadata",
+                "historical-dns",
+                "service-fingerprint (expanded ports)",
+                "header-analysis",
+                "js-analysis",
+                "cloud-exposure",
+                "aggressive-path-probing",
+                "subdomain-permutation-enum",
+                "historical-correlation",
+                "repo-scan",
+            ],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OffensiveCommand, ScanProfile};
+
+    #[test]
+    fn aggressive_profile_includes_expanded_modules() {
+        let modules = OffensiveCommand::get_modules_for_profile(ScanProfile::Aggressive);
+        assert!(modules.contains(&"aggressive-path-probing"));
+        assert!(modules.contains(&"subdomain-permutation-enum"));
+        assert!(modules.contains(&"historical-correlation"));
     }
 }

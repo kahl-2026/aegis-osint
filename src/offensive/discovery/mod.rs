@@ -152,6 +152,37 @@ impl DiscoveryEngine {
         Ok(result)
     }
 
+    /// Aggressive subdomain permutation checks for common hostnames
+    pub async fn discover_common_subdomains(
+        &self,
+        domain: &str,
+        prefixes: &[&str],
+    ) -> Result<Vec<String>> {
+        let check = self.policy.check_target(domain, &self.scope).await?;
+        if !check.allowed {
+            return Ok(Vec::new());
+        }
+
+        let mut discovered = Vec::new();
+        let mut seen = HashSet::new();
+        for prefix in prefixes {
+            let candidate = format!("{}.{}", prefix, domain);
+            if !self.scope.is_in_scope(&candidate).in_scope {
+                continue;
+            }
+            self.policy.wait_for_rate_limit().await;
+            if let Ok(response) = self.resolver.lookup_ip(&candidate).await {
+                let has_records = response.iter().next().is_some();
+                if has_records && seen.insert(candidate.clone()) {
+                    self.save_asset(&candidate, "subdomain").await?;
+                    discovered.push(candidate);
+                }
+            }
+        }
+
+        Ok(discovered)
+    }
+
     /// Discover ASN information for an IP
     pub async fn discover_asn(&self, ip: &str) -> Result<Option<AsnInfo>> {
         // Validate scope
@@ -202,13 +233,16 @@ impl DiscoveryEngine {
 
         self.policy.wait_for_rate_limit().await;
 
+        const HTTPS_PORTS: &[u16] = &[443, 8443, 9443];
+        const HTTP_PORTS: &[u16] = &[80, 8080, 8081, 8000, 8888, 3000, 5000, 7001, 9000];
+
         // For HTTPS services, try to get certificate info
-        if port == 443 || port == 8443 {
+        if HTTPS_PORTS.contains(&port) {
             return self.fingerprint_https(host, port).await;
         }
 
         // For HTTP, do a simple HEAD request
-        if port == 80 || port == 8080 {
+        if HTTP_PORTS.contains(&port) {
             return self.fingerprint_http(host, port).await;
         }
 

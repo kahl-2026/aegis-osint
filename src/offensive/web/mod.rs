@@ -19,11 +19,17 @@ pub struct WebReconEngine {
     policy: PolicyEngine,
     storage: Storage,
     client: reqwest::Client,
+    run_id: Option<String>,
 }
 
 impl WebReconEngine {
     /// Create a new web recon engine
-    pub fn new(scope: Scope, policy: PolicyEngine, storage: Storage) -> Result<Self> {
+    pub fn new(
+        scope: Scope,
+        policy: PolicyEngine,
+        storage: Storage,
+        run_id: Option<&str>,
+    ) -> Result<Self> {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .danger_accept_invalid_certs(false)
@@ -35,6 +41,7 @@ impl WebReconEngine {
             policy,
             storage,
             client,
+            run_id: run_id.map(str::to_string),
         })
     }
 
@@ -57,6 +64,7 @@ impl WebReconEngine {
             missing_security_headers: vec![],
             misconfigured_headers: vec![],
             technologies: vec![],
+            generated_findings: 0,
         };
 
         let mut last_error: Option<(String, reqwest::Error)> = None;
@@ -127,7 +135,8 @@ impl WebReconEngine {
                     }
 
                     // Generate findings for issues
-                    self.generate_header_findings(&candidate_url, &result)
+                    result.generated_findings = self
+                        .generate_header_findings(&candidate_url, &result)
                         .await?;
                     return Ok(result);
                 }
@@ -218,7 +227,11 @@ impl WebReconEngine {
     }
 
     /// Check for common misconfigurations
-    pub async fn check_misconfigurations(&self, url: &str) -> Result<Vec<MisconfigFinding>> {
+    pub async fn check_misconfigurations(
+        &self,
+        url: &str,
+        aggressive: bool,
+    ) -> Result<Vec<MisconfigFinding>> {
         let parsed = url::Url::parse(url)?;
         let host = parsed.host_str().unwrap_or("");
 
@@ -230,7 +243,7 @@ impl WebReconEngine {
         let mut findings = Vec::new();
 
         // Check for exposed paths
-        let paths_to_check = [
+        let mut paths_to_check = vec![
             ("/.git/config", "Git repository exposed"),
             ("/.env", "Environment file exposed"),
             ("/robots.txt", "Robots.txt (info disclosure)"),
@@ -241,13 +254,21 @@ impl WebReconEngine {
             ("/web.config", "IIS web.config exposed"),
             ("/crossdomain.xml", "Flash crossdomain.xml present"),
         ];
+        if aggressive {
+            paths_to_check.extend([
+                ("/actuator/health", "Spring actuator endpoint exposed"),
+                ("/debug", "Debug endpoint exposed"),
+                ("/graphql", "GraphQL endpoint exposed"),
+                ("/swagger-ui/index.html", "Swagger UI exposed"),
+            ]);
+        }
 
         let mut seen = std::collections::HashSet::new();
         let mut had_response = false;
         let mut last_error: Option<(String, reqwest::Error)> = None;
 
         for base_url in self.candidate_urls(url) {
-            for (path, description) in paths_to_check {
+            for (path, description) in &paths_to_check {
                 self.policy.wait_for_rate_limit().await;
 
                 let check_url = format!("{}{}", base_url.trim_end_matches('/'), path);
@@ -258,12 +279,14 @@ impl WebReconEngine {
                         if response.status().is_success() && seen.insert(check_url.clone()) {
                             let severity = self.classify_misconfig_severity(path);
 
-                            findings.push(MisconfigFinding {
+                            let finding = MisconfigFinding {
                                 url: check_url,
                                 description: description.to_string(),
                                 severity,
                                 evidence: format!("HTTP {}", response.status()),
-                            });
+                            };
+                            self.save_misconfig_finding(&finding).await?;
+                            findings.push(finding);
                         }
                     }
                     Err(e) => {
@@ -362,7 +385,11 @@ impl WebReconEngine {
     fn classify_misconfig_severity(&self, path: &str) -> String {
         match path {
             "/.git/config" | "/.env" => "high".to_string(),
-            "/phpinfo.php" | "/server-status" => "medium".to_string(),
+            "/phpinfo.php"
+            | "/server-status"
+            | "/actuator/health"
+            | "/debug"
+            | "/swagger-ui/index.html" => "medium".to_string(),
             _ => "low".to_string(),
         }
     }
@@ -371,15 +398,16 @@ impl WebReconEngine {
         &self,
         url: &str,
         result: &HeaderAnalysisResult,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let now = Utc::now().to_rfc3339();
+        let mut generated = 0usize;
 
         // Generate findings for missing security headers
         if !result.missing_security_headers.is_empty() {
             let finding = Finding {
                 id: format!("header-missing-{}", sha256_short(url)),
                 scope_id: self.scope.id.clone(),
-                run_id: None,
+                run_id: self.run_id.clone(),
                 asset: url.to_string(),
                 finding_type: "security-header".to_string(),
                 title: "Missing Security Headers".to_string(),
@@ -406,6 +434,7 @@ impl WebReconEngine {
             };
 
             self.storage.save_finding(&finding).await?;
+            generated += 1;
         }
 
         // Generate findings for misconfigured headers
@@ -417,7 +446,7 @@ impl WebReconEngine {
                     sha256_short(url)
                 ),
                 scope_id: self.scope.id.clone(),
-                run_id: None,
+                run_id: self.run_id.clone(),
                 asset: url.to_string(),
                 finding_type: "security-header".to_string(),
                 title: format!("Misconfigured {}", issue.header),
@@ -442,9 +471,45 @@ impl WebReconEngine {
             };
 
             self.storage.save_finding(&finding).await?;
+            generated += 1;
         }
 
-        Ok(())
+        Ok(generated)
+    }
+
+    async fn save_misconfig_finding(&self, finding: &MisconfigFinding) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let db_finding = Finding {
+            id: format!(
+                "misconfig-{}-{}",
+                sha256_short(&finding.url),
+                sha256_short(&finding.description)
+            ),
+            scope_id: self.scope.id.clone(),
+            run_id: self.run_id.clone(),
+            asset: finding.url.clone(),
+            finding_type: "web-misconfiguration".to_string(),
+            title: finding.description.clone(),
+            description: format!("Potential web misconfiguration at {}", finding.url),
+            impact: "Misconfigurations can disclose sensitive data or enable unauthorized access."
+                .to_string(),
+            severity: finding.severity.clone(),
+            confidence: 85,
+            status: Some("open".to_string()),
+            reproduction: Some(format!("curl -I {}", finding.url)),
+            source: "web-recon".to_string(),
+            method: "misconfiguration-check".to_string(),
+            scope_verified: true,
+            evidence: vec![Evidence {
+                description: finding.description.clone(),
+                source: "misconfiguration-check".to_string(),
+                data: Some(finding.evidence.clone()),
+                timestamp: now.clone(),
+            }],
+            created_at: now.clone(),
+            updated_at: now,
+        };
+        self.storage.save_finding(&db_finding).await
     }
 }
 
@@ -462,6 +527,7 @@ pub struct HeaderAnalysisResult {
     pub missing_security_headers: Vec<String>,
     pub misconfigured_headers: Vec<HeaderIssue>,
     pub technologies: Vec<Technology>,
+    pub generated_findings: usize,
 }
 
 /// Header issue

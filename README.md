@@ -72,7 +72,7 @@ cargo install --path .
 # Fedora: sudo dnf install gcc sqlite-devel openssl-devel bind-utils whois pkgconfig git curl
 ```
 
-The interactive CLI experience uses a full-screen keyboard-first TUI (ratatui/crossterm) with compact dark-theme panels and arrow/enter/esc navigation for faster workflows.
+The interactive CLI experience uses a full-screen keyboard-first TUI (ratatui/crossterm) with a compact top status bar, richer context panels, and arrow/enter/esc navigation for faster workflows.
 
 ## Quick Start
 
@@ -101,6 +101,9 @@ aegis offensive run --program "HackerOne Example" --scope scope-id-123 --profile
 
 # Safe profile (lower rate, passive only)
 aegis offensive run --program "Example" --scope scope-id-123 --profile safe
+
+# Aggressive profile (expanded active probing, explicit opt-in)
+aegis offensive run --program "Example" --scope scope-id-123 --profile aggressive
 ```
 
 ### 4. Monitor Defensively
@@ -144,7 +147,7 @@ aegis scope export <scope-id> --output <path>
 
 ### Offensive Operations
 ```
-aegis offensive run --program <name> --scope <id> [--profile safe|standard]
+aegis offensive run --program <name> --scope <id> [--profile safe|standard|thorough|aggressive]
 aegis offensive status --run-id <id>
 aegis offensive stop --run-id <id>
 ```
