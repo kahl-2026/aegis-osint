@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   lint:
@@ -139,7 +140,9 @@ jobs:
       
       - name: Install dependencies (macOS)
         if: matrix.os == 'macos-latest'
-        run: brew install sqlite openssl
+        run: |
+          brew list sqlite >/dev/null 2>&1 || brew install sqlite
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
       
       - name: Cache cargo
         uses: actions/cache@v4
@@ -161,6 +164,24 @@ jobs:
           name: aegis-osint-${{ matrix.os }}
           path: target/release/aegis*
 
+  build-archlinux:
+    name: Build (archlinux)
+    runs-on: ubuntu-latest
+    needs: test
+    container:
+      image: archlinux:latest
+    steps:
+      - name: Install dependencies (Arch Linux)
+        run: |
+          pacman -Sy --noconfirm archlinux-keyring
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel rust cargo openssl pkgconf sqlite git
+
+      - uses: actions/checkout@v4
+
+      - name: Build release
+        run: cargo build --release --all-features
+
   security:
     name: Security Audit
     runs-on: ubuntu-latest
@@ -171,10 +192,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       
       - name: Install cargo-audit
-        run: cargo install cargo-audit
+        run: cargo install cargo-audit --locked
       
       - name: Run security audit
-        run: cargo audit
+        run: cargo audit --quiet
 
   e2e:
     name: E2E Tests
