@@ -1,0 +1,5 @@
+[advisories]
+ignore = [
+  # sqlx-macros-core currently pulls sqlx-mysql -> rsa; no fixed rsa release is available yet.
+  "RUSTSEC-2023-0071",
+]

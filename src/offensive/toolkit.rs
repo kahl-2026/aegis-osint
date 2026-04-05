@@ -7,10 +7,10 @@ use crate::scope::{Scope, ScopeItemType};
 use crate::storage::{Asset, Evidence, Finding, ModuleSummary, Storage};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::proto::rr::{RData, RecordType};
+use hickory_resolver::TokioAsyncResolver;
 use std::collections::{HashMap, HashSet};
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::proto::rr::{RData, RecordType};
-use trust_dns_resolver::TokioAsyncResolver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ToolkitSuite {

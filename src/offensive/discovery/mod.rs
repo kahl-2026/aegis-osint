@@ -11,9 +11,9 @@ use crate::scope::Scope;
 use crate::storage::{Asset, Storage};
 use anyhow::Result;
 use chrono::Utc;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::TokioAsyncResolver;
 use std::collections::HashSet;
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
 
 /// Asset discovery engine
 pub struct DiscoveryEngine {

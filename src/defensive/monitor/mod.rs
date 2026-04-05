@@ -5,9 +5,9 @@ use crate::scope::Scope;
 use crate::storage::{Asset, Storage};
 use anyhow::Result;
 use chrono::Utc;
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use hickory_resolver::TokioAsyncResolver;
 use serde_json::Value;
-use trust_dns_resolver::config::{ResolverConfig, ResolverOpts};
-use trust_dns_resolver::TokioAsyncResolver;
 
 /// Monitor for continuous attack surface tracking
 #[allow(dead_code)]

@@ -30,7 +30,7 @@ tokio = { version = "1.36", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 
 # Database
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "postgres", "chrono", "uuid"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "postgres", "chrono", "uuid"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -38,11 +38,9 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 
 # DNS Resolution
-trust-dns-resolver = "0.23"
 hickory-resolver = "0.24"
 
 # TLS/Certificates
-rustls = "0.22"
 x509-parser = "0.16"
 
 # Terminal UI
