@@ -1,7 +1,7 @@
 //! Defensive OSINT commands
 
 use crate::policy::PolicyEngine;
-use crate::storage::{FindingContext, Storage};
+use crate::storage::Storage;
 use anyhow::Result;
 use clap::{Args, Subcommand};
 use colored::Colorize;
@@ -58,7 +58,7 @@ pub struct DefensiveScanArgs {
     #[arg(short, long)]
     pub scope: String,
 
-    /// Specific checks to run
+    /// Specific checks to run (inventory, drift, exposure, brand, service-audit)
     #[arg(short, long, value_delimiter = ',')]
     pub checks: Option<Vec<String>>,
 }
@@ -272,46 +272,116 @@ impl DefensiveCommand {
             "Open exposures".bold(),
             results.exposures_count
         );
+        println!(
+            "  {:24} {}",
+            "Open findings total".bold(),
+            results.open_findings_count
+        );
         println!("  {:24} {:.2}s", "Duration".bold(), results.duration_secs);
         println!("{}", "─".repeat(60).dimmed());
 
-        if results.changes_count > 0 || results.exposures_count > 0 {
+        if !results.checks_run.is_empty() {
+            println!(
+                "  {:24} {}",
+                "Checks executed".bold(),
+                results.checks_run.join(", ")
+            );
+        }
+
+        if !results.inventory_breakdown.is_empty() {
             println!();
-            if let Ok(recent) = storage
-                .list_findings(
-                    None,
-                    FindingContext {
-                        scope: Some(&args.scope),
-                        run: None,
-                    },
-                    Some("open".to_string()),
-                    None,
-                    10,
-                    "severity",
-                )
-                .await
-            {
-                if !recent.is_empty() {
-                    println!("{}", "Top open findings:".bold());
-                    for f in recent {
-                        let sev = match f.severity.as_str() {
-                            "critical" => f.severity.red().bold().to_string(),
-                            "high" => f.severity.red().to_string(),
-                            "medium" => f.severity.yellow().to_string(),
-                            "low" => f.severity.green().to_string(),
-                            _ => f.severity.blue().to_string(),
-                        };
-                        println!(
-                            "  {} {:10} {} ({})",
-                            "•".cyan(),
-                            sev,
-                            f.title,
-                            f.asset.dimmed()
-                        );
-                    }
-                    println!();
-                }
+            println!("{}", "Inventory by asset type:".bold());
+            for item in &results.inventory_breakdown {
+                println!("  {:18} {}", item.name, item.count);
             }
+        }
+
+        println!();
+        println!("{}", "Drift breakdown:".bold());
+        println!(
+            "  dns_changes={} cert_changes={} new_subdomains={} new_services={}",
+            results.drift_dns_changes,
+            results.drift_cert_changes,
+            results.drift_new_subdomains,
+            results.drift_new_services
+        );
+
+        if !results.open_findings_breakdown.is_empty() {
+            println!();
+            println!("{}", "Open findings by severity:".bold());
+            for item in &results.open_findings_breakdown {
+                println!("  {:10} {}", item.name, item.count);
+            }
+        }
+
+        if !results.suspicious_brand_domains.is_empty() {
+            println!();
+            println!(
+                "{} {}",
+                "Active suspicious brand domains:".bold(),
+                results.suspicious_brand_domains.len()
+            );
+            for domain in results.suspicious_brand_domains.iter().take(12) {
+                println!("  {} {}", "•".yellow(), domain);
+            }
+            if results.suspicious_brand_domains.len() > 12 {
+                println!(
+                    "  {} Showing first 12 of {} domains",
+                    "…".yellow(),
+                    results.suspicious_brand_domains.len()
+                );
+            }
+        }
+
+        if !results.risky_services.is_empty() {
+            println!();
+            println!(
+                "{} {}",
+                "Risky exposed services:".bold(),
+                results.risky_services.len()
+            );
+            for service in results.risky_services.iter().take(12) {
+                println!("  {} {}", "•".red(), service);
+            }
+            if results.risky_services.len() > 12 {
+                println!(
+                    "  {} Showing first 12 of {} services",
+                    "…".yellow(),
+                    results.risky_services.len()
+                );
+            }
+        }
+
+        if !results.top_exposures.is_empty() {
+            println!();
+            println!("{}", "Top open findings:".bold());
+            for finding in results.top_exposures.iter().take(12) {
+                let sev = match finding.severity.as_str() {
+                    "critical" => finding.severity.red().bold().to_string(),
+                    "high" => finding.severity.red().to_string(),
+                    "medium" => finding.severity.yellow().to_string(),
+                    "low" => finding.severity.green().to_string(),
+                    _ => finding.severity.blue().to_string(),
+                };
+                println!(
+                    "  {} {:10} {} ({})",
+                    "•".cyan(),
+                    sev,
+                    finding.title,
+                    finding.asset.dimmed()
+                );
+            }
+            if results.top_exposures.len() > 12 {
+                println!(
+                    "  {} Showing first 12 of {} findings",
+                    "…".yellow(),
+                    results.top_exposures.len()
+                );
+            }
+            println!();
+        }
+
+        if results.changes_count > 0 || results.exposures_count > 0 {
             println!(
                 "View details: {}",
                 format!("aegis findings list --scope {}", args.scope).cyan()

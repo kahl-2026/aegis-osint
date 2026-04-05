@@ -2155,10 +2155,101 @@ impl Menu {
                                                 result.exposures_count
                                             );
                                             println!(
+                                                "  {} {}",
+                                                "Open findings total:".bold(),
+                                                result.open_findings_count
+                                            );
+                                            println!(
                                                 "  {} {:.1}s",
                                                 "Duration:".bold(),
                                                 result.duration_secs
                                             );
+                                            if !result.checks_run.is_empty() {
+                                                println!(
+                                                    "  {} {}",
+                                                    "Checks run:".bold(),
+                                                    result.checks_run.join(", ")
+                                                );
+                                            }
+                                            if !result.inventory_breakdown.is_empty() {
+                                                println!();
+                                                println!("  {}", "Inventory by type".bold());
+                                                for item in &result.inventory_breakdown {
+                                                    println!("    {:16} {}", item.name, item.count);
+                                                }
+                                            }
+                                            println!();
+                                            println!(
+                                                "  {} dns={} cert={} subdomains={} services={}",
+                                                "Drift breakdown:".bold(),
+                                                result.drift_dns_changes,
+                                                result.drift_cert_changes,
+                                                result.drift_new_subdomains,
+                                                result.drift_new_services
+                                            );
+                                            if !result.open_findings_breakdown.is_empty() {
+                                                println!(
+                                                    "  {}",
+                                                    "Open findings by severity".bold()
+                                                );
+                                                for item in &result.open_findings_breakdown {
+                                                    println!("    {:10} {}", item.name, item.count);
+                                                }
+                                            }
+                                            if !result.suspicious_brand_domains.is_empty() {
+                                                println!(
+                                                    "  {} {}",
+                                                    "Suspicious active brand domains:".bold(),
+                                                    result.suspicious_brand_domains.len()
+                                                );
+                                                for domain in
+                                                    result.suspicious_brand_domains.iter().take(8)
+                                                {
+                                                    println!("    {} {}", "•".yellow(), domain);
+                                                }
+                                            }
+                                            if !result.risky_services.is_empty() {
+                                                println!(
+                                                    "  {} {}",
+                                                    "Risky exposed services:".bold(),
+                                                    result.risky_services.len()
+                                                );
+                                                for service in result.risky_services.iter().take(8)
+                                                {
+                                                    println!("    {} {}", "•".red(), service);
+                                                }
+                                            }
+                                            if !result.top_exposures.is_empty() {
+                                                println!();
+                                                println!("  {}", "Top open findings".bold());
+                                                for finding in result.top_exposures.iter().take(10)
+                                                {
+                                                    let sev = match finding.severity.as_str() {
+                                                        "critical" => finding
+                                                            .severity
+                                                            .red()
+                                                            .bold()
+                                                            .to_string(),
+                                                        "high" => {
+                                                            finding.severity.red().to_string()
+                                                        }
+                                                        "medium" => {
+                                                            finding.severity.yellow().to_string()
+                                                        }
+                                                        "low" => {
+                                                            finding.severity.green().to_string()
+                                                        }
+                                                        _ => finding.severity.blue().to_string(),
+                                                    };
+                                                    println!(
+                                                        "    {} {:10} {} ({})",
+                                                        "•".cyan(),
+                                                        sev,
+                                                        finding.title,
+                                                        finding.asset.dimmed()
+                                                    );
+                                                }
+                                            }
                                         } else {
                                             let orchestrator = DefensiveOrchestrator::new(
                                                 scope,

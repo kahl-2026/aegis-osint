@@ -190,5 +190,23 @@ pub struct DefensiveScanResult {
     pub assets_count: usize,
     pub changes_count: usize,
     pub exposures_count: usize,
+    pub checks_run: Vec<String>,
+    pub inventory_breakdown: Vec<DefensiveCount>,
+    pub drift_dns_changes: usize,
+    pub drift_cert_changes: usize,
+    pub drift_new_subdomains: usize,
+    pub drift_new_services: usize,
+    pub open_findings_count: usize,
+    pub open_findings_breakdown: Vec<DefensiveCount>,
+    pub top_exposures: Vec<FindingSummary>,
+    pub suspicious_brand_domains: Vec<String>,
+    pub risky_services: Vec<String>,
     pub duration_secs: f64,
+}
+
+/// Named count used in defensive scan reporting.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DefensiveCount {
+    pub name: String,
+    pub count: usize,
 }
