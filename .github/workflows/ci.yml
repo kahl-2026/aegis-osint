@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, main, develop]
   pull_request:
-    branches: [main, develop]
+    branches: [master, main, develop]
 
 env:
   CARGO_TERM_COLOR: always
@@ -37,7 +37,7 @@ jobs:
         run: cargo fmt -- --check
       
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-features -- -D warnings
 
   test:
     name: Test
@@ -52,7 +52,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libssl-dev
+          sudo apt-get install -y libsqlite3-dev libssl-dev jq bc
       
       - name: Cache cargo
         uses: actions/cache@v4
@@ -81,7 +81,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libsqlite3-dev libssl-dev
+          sudo apt-get install -y libsqlite3-dev libssl-dev jq bc
       
       - name: Install tarpaulin
         run: cargo install cargo-tarpaulin
@@ -116,12 +116,11 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        rust: [stable]
     steps:
       - uses: actions/checkout@v4
       
       - name: Install Rust
-        uses: dtolnay/rust-action@${{ matrix.rust }}
+        uses: dtolnay/rust-action@stable
       
       - name: Install dependencies (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
@@ -198,7 +197,7 @@ jobs:
         run: cargo build --release
       
       - name: Run E2E tests
-        run: cargo test --test '*' --all-features
+        run: cargo test --tests --all-features
       
       - name: Test CLI commands
         run: |
