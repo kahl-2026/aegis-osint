@@ -9,7 +9,7 @@ use crate::storage::{Finding, FindingContext, ModuleSummary, ScanSummary, Storag
 use anyhow::Result;
 use chrono::Utc;
 use serde_json::json;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::time::Instant;
 
 use super::cloud::CloudExposureEngine;
@@ -132,6 +132,7 @@ impl OffensiveOrchestrator {
         let mut total_assets = 0usize;
         let mut metrics = OffensiveRunMetrics::default();
         let mut module_summaries = Vec::new();
+        let mut module_timings_ms: Vec<(String, u64)> = Vec::new();
         let enabled = modules_for_profile(self.profile)
             .into_iter()
             .collect::<HashSet<_>>();
@@ -144,8 +145,11 @@ impl OffensiveOrchestrator {
         // Phase 1: CT Log Discovery
         if enabled.contains(&ReconModule::CtLogDiscovery) {
             progress_callback("CT Log Discovery", 10);
+            let module_started = Instant::now();
             let ct_assets = self.run_ct_discovery(&mut metrics).await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
             total_assets += ct_assets;
+            module_timings_ms.push((ReconModule::CtLogDiscovery.label().to_string(), duration_ms));
             module_summaries.push(ModuleSummary {
                 module: ReconModule::CtLogDiscovery.label().to_string(),
                 assets_discovered: ct_assets,
@@ -157,12 +161,15 @@ impl OffensiveOrchestrator {
         // Phase 2: DNS Enumeration
         if enabled.contains(&ReconModule::DnsEnumeration) {
             progress_callback("DNS Enumeration", 25);
+            let module_started = Instant::now();
             let posture_before = metrics.dns_posture_findings;
             let asn_before = metrics.asn_mappings;
             let dns_assets = self
                 .run_dns_discovery(run_id, &mut metrics, self.is_aggressive())
                 .await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
             total_assets += dns_assets;
+            module_timings_ms.push((ReconModule::DnsEnumeration.label().to_string(), duration_ms));
             module_summaries.push(ModuleSummary {
                 module: ReconModule::DnsEnumeration.label().to_string(),
                 assets_discovered: dns_assets,
@@ -174,8 +181,14 @@ impl OffensiveOrchestrator {
         // Phase 3: Service Fingerprinting (if profile allows)
         if enabled.contains(&ReconModule::ServiceFingerprinting) {
             progress_callback("Service Fingerprinting", 40);
+            let module_started = Instant::now();
             let service_info = self.run_service_fingerprinting(&mut metrics).await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
             total_assets += service_info;
+            module_timings_ms.push((
+                ReconModule::ServiceFingerprinting.label().to_string(),
+                duration_ms,
+            ));
             module_summaries.push(ModuleSummary {
                 module: ReconModule::ServiceFingerprinting.label().to_string(),
                 assets_discovered: service_info,
@@ -187,6 +200,7 @@ impl OffensiveOrchestrator {
         // Phase 4: Web Reconnaissance
         if enabled.contains(&ReconModule::WebReconnaissance) {
             progress_callback("Web Reconnaissance", 55);
+            let module_started = Instant::now();
             let headers_before = metrics.header_issues;
             let misconfigs_before = metrics.misconfigs;
             let methods_before = metrics.method_findings;
@@ -198,6 +212,11 @@ impl OffensiveOrchestrator {
                 true,
             )
             .await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
+            module_timings_ms.push((
+                ReconModule::WebReconnaissance.label().to_string(),
+                duration_ms,
+            ));
             module_summaries.push(ModuleSummary {
                 module: ReconModule::WebReconnaissance.label().to_string(),
                 assets_discovered: metrics.js_endpoints.saturating_sub(endpoints_before),
@@ -213,8 +232,11 @@ impl OffensiveOrchestrator {
         // Phase 5: Cloud Exposure Check (if profile allows)
         if enabled.contains(&ReconModule::CloudExposure) {
             progress_callback("Cloud Exposure Check", 70);
+            let module_started = Instant::now();
             let cloud_before = metrics.cloud_exposures;
             self.run_cloud_check(run_id, &mut metrics).await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
+            module_timings_ms.push((ReconModule::CloudExposure.label().to_string(), duration_ms));
             module_summaries.push(ModuleSummary {
                 module: ReconModule::CloudExposure.label().to_string(),
                 assets_discovered: 0,
@@ -226,9 +248,15 @@ impl OffensiveOrchestrator {
         // Phase 6: Historical Correlation (if thorough/aggressive)
         if enabled.contains(&ReconModule::HistoricalCorrelation) {
             progress_callback("Historical Correlation", 88);
+            let module_started = Instant::now();
             let related_before = metrics.related_domains;
             let timeline_before = metrics.timeline_events;
             self.run_historical_correlation(&mut metrics).await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
+            module_timings_ms.push((
+                ReconModule::HistoricalCorrelation.label().to_string(),
+                duration_ms,
+            ));
             module_summaries.push(ModuleSummary {
                 module: ReconModule::HistoricalCorrelation.label().to_string(),
                 assets_discovered: metrics.related_domains.saturating_sub(related_before),
@@ -245,34 +273,60 @@ impl OffensiveOrchestrator {
         )?;
         if enabled.contains(&ReconModule::DnsIntelligenceSuite) {
             progress_callback("DNS Intelligence Suite", 78);
+            let module_started = Instant::now();
             let summary = toolkit
                 .run_suite(ToolkitSuite::DnsIntelligence, self.is_aggressive())
                 .await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
             total_assets += summary.assets_discovered;
+            module_timings_ms.push((
+                ReconModule::DnsIntelligenceSuite.label().to_string(),
+                duration_ms,
+            ));
             module_summaries.push(summary);
         }
         if enabled.contains(&ReconModule::RepoIntelligenceSuite) {
             progress_callback("Repository Intelligence Suite", 82);
+            let module_started = Instant::now();
             let summary = toolkit
                 .run_suite(ToolkitSuite::RepoIntelligence, self.is_aggressive())
                 .await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
             total_assets += summary.assets_discovered;
+            module_timings_ms.push((
+                ReconModule::RepoIntelligenceSuite.label().to_string(),
+                duration_ms,
+            ));
             module_summaries.push(summary);
         }
         if enabled.contains(&ReconModule::TlsInfraIntelligenceSuite) {
             progress_callback("TLS Infrastructure Intelligence Suite", 86);
+            let module_started = Instant::now();
             let summary = toolkit
                 .run_suite(ToolkitSuite::TlsInfrastructure, self.is_aggressive())
                 .await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
             total_assets += summary.assets_discovered;
+            module_timings_ms.push((
+                ReconModule::TlsInfraIntelligenceSuite.label().to_string(),
+                duration_ms,
+            ));
             module_summaries.push(summary);
         }
         if enabled.contains(&ReconModule::LeakMentionIntelligenceSuite) {
             progress_callback("Leak Mention Intelligence Suite", 90);
+            let module_started = Instant::now();
             let summary = toolkit
                 .run_suite(ToolkitSuite::LeakMentions, self.is_aggressive())
                 .await?;
+            let duration_ms = module_started.elapsed().as_millis() as u64;
             total_assets += summary.assets_discovered;
+            module_timings_ms.push((
+                ReconModule::LeakMentionIntelligenceSuite
+                    .label()
+                    .to_string(),
+                duration_ms,
+            ));
             module_summaries.push(summary);
         }
 
@@ -294,6 +348,33 @@ impl OffensiveOrchestrator {
             )
             .await?;
         let total_findings = findings_for_run.len();
+        let mut severity_totals = BTreeMap::new();
+        for finding in &findings_for_run {
+            *severity_totals
+                .entry(finding.severity.clone())
+                .or_insert(0usize) += 1;
+        }
+        let top_findings = findings_for_run
+            .iter()
+            .take(8)
+            .map(|finding| {
+                json!({
+                    "id": finding.id,
+                    "severity": finding.severity,
+                    "title": finding.title,
+                    "asset": finding.asset,
+                })
+            })
+            .collect::<Vec<_>>();
+        let module_timings = module_timings_ms
+            .iter()
+            .map(|(module, duration_ms)| {
+                json!({
+                    "module": module,
+                    "duration_ms": duration_ms,
+                })
+            })
+            .collect::<Vec<_>>();
         self.storage
             .update_scan_findings_count(run_id, total_findings as i32)
             .await?;
@@ -322,6 +403,10 @@ impl OffensiveOrchestrator {
                     "evidence_count": summary.evidence_count,
                     "duration_secs": summary.duration_secs,
                     "module_summaries": summary.module_summaries,
+                    "module_timings_ms": module_timings,
+                    "severity_totals": severity_totals,
+                    "top_findings": top_findings,
+                    "modules_executed": summary.module_summaries.len(),
                     "profile": format!("{:?}", self.profile),
                 }),
             )

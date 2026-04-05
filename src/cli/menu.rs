@@ -8,7 +8,10 @@ use crate::offensive::OffensiveOrchestrator;
 use crate::policy::PolicyEngine;
 use crate::reporting::ReportGenerator;
 use crate::scope::{Scope, ScopeDefinition, ScopeEngine, ScopeItem, ScopeItemType};
-use crate::storage::{FindingContext, ModuleSummary, MonitorInfo, ScanRunInfo, Storage};
+use crate::storage::{
+    FindingContext, FindingSummary, ModuleSummary, MonitorInfo, ScanRunInfo, Storage,
+};
+use crate::utils::terminal::{content_width, separator_line, truncate_ellipsis};
 use crate::utils::validation::{validate_asn, validate_cidr, validate_domain, validate_url};
 use anyhow::Result;
 use chrono::Utc;
@@ -25,8 +28,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Terminal;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::io::{self, Write};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const DEFAULT_MENU_RPS: u32 = 10;
 const DEFAULT_MENU_TIMEOUT_SECS: u32 = 30;
@@ -166,9 +170,13 @@ impl Menu {
         }
     }
 
+    fn terminal_content_width(&self, min_width: usize) -> usize {
+        content_width(self.width, 2, min_width)
+    }
+
     /// Print a horizontal line
     fn line(&self) -> String {
-        "─".repeat(self.width)
+        separator_line(self.width, 2, 40)
     }
 
     /// Print the banner
@@ -447,13 +455,7 @@ impl Menu {
     }
 
     fn truncate_chars(value: &str, max_chars: usize) -> String {
-        let mut chars = value.chars();
-        let truncated: String = chars.by_ref().take(max_chars).collect();
-        if chars.next().is_some() {
-            format!("{}...", truncated)
-        } else {
-            truncated
-        }
+        truncate_ellipsis(value, max_chars)
     }
 
     /// Wait for enter
@@ -1034,8 +1036,9 @@ impl Menu {
     }
 
     fn render_findings_rows(&self, findings: &[&(String, String, String, String)]) {
+        let (id_w, sev_w, title_w, asset_w) = self.findings_column_widths();
         println!(
-            "  {:8} {:12} {:34} {}",
+            "  {:id_w$} {:sev_w$} {:title_w$} {:asset_w$}",
             "ID".bold(),
             "SEVERITY".bold(),
             "TITLE".bold(),
@@ -1044,18 +1047,40 @@ impl Menu {
         println!("  {}", self.line().dimmed());
 
         for (id, severity, finding_type, target) in findings {
-            let short_id = Self::truncate_chars(id, 8);
-            let short_title = Self::truncate_chars(finding_type, 34);
-            let short_target = Self::truncate_chars(target, 22);
+            let short_id = Self::truncate_chars(id, id_w);
+            let short_title = Self::truncate_chars(finding_type, title_w);
+            let short_target = Self::truncate_chars(target, asset_w);
 
             println!(
-                "  {:8} {:12} {:34} {}",
+                "  {:id_w$} {:sev_w$} {:title_w$} {:asset_w$}",
                 short_id.dimmed(),
                 Self::severity_label(severity),
                 short_title,
                 short_target
             );
         }
+    }
+
+    fn findings_column_widths(&self) -> (usize, usize, usize, usize) {
+        let content_w = self.terminal_content_width(72);
+        let id_w = 8usize;
+        let sev_w = 12usize;
+        let spacing = 3usize;
+        let remaining = content_w.saturating_sub(id_w + sev_w + spacing);
+        let min_title = 18usize;
+        let min_asset = 16usize;
+        let (title_w, asset_w) = if remaining >= min_title + min_asset {
+            let title = (remaining * 55) / 100;
+            (
+                title.max(min_title),
+                remaining.saturating_sub(title).max(min_asset),
+            )
+        } else {
+            let title = remaining.saturating_mul(60).saturating_div(100).max(10);
+            let asset = remaining.saturating_sub(title).max(8);
+            (title, asset)
+        };
+        (id_w, sev_w, title_w, asset_w)
     }
 
     fn severity_label(severity: &str) -> String {
@@ -1087,8 +1112,9 @@ impl Menu {
         self.print_banner();
         self.print_header(title);
         println!();
+        let (id_w, status_w, progress_w, findings_w, scope_w) = self.scan_runs_column_widths();
         println!(
-            "  {:10} {:10} {:10} {:10} {}",
+            "  {:id_w$} {:status_w$} {:progress_w$} {:findings_w$} {:scope_w$}",
             "RUN ID".bold(),
             "STATUS".bold(),
             "PROGRESS".bold(),
@@ -1105,15 +1131,27 @@ impl Menu {
                 _ => run.status.normal().to_string(),
             };
             println!(
-                "  {:10} {:10} {:10} {:10} {}",
-                Self::truncate_chars(&run.id, 10).dimmed(),
+                "  {:id_w$} {:status_w$} {:progress_w$} {:findings_w$} {:scope_w$}",
+                Self::truncate_chars(&run.id, id_w).dimmed(),
                 status,
                 format!("{}%", run.progress),
                 run.findings_count,
-                Self::truncate_chars(&run.scope_id, 22)
+                Self::truncate_chars(&run.scope_id, scope_w)
             );
         }
         println!();
+    }
+
+    fn scan_runs_column_widths(&self) -> (usize, usize, usize, usize, usize) {
+        let content_w = self.terminal_content_width(74);
+        let id_w = 10usize;
+        let status_w = 10usize;
+        let progress_w = 9usize;
+        let findings_w = 8usize;
+        let spacing = 4usize;
+        let used = id_w + status_w + progress_w + findings_w + spacing;
+        let scope_w = content_w.saturating_sub(used).max(16);
+        (id_w, status_w, progress_w, findings_w, scope_w)
     }
 
     fn show_module_breakdown(&self, title: &str, modules: &[ModuleSummary]) {
@@ -1123,8 +1161,9 @@ impl Menu {
         println!();
         println!("  {}", title.bold());
         println!("  {}", self.line().dimmed());
+        let (module_w, assets_w, findings_w, evidence_w) = self.module_column_widths();
         println!(
-            "  {:30} {:8} {:8} {:8}",
+            "  {:module_w$} {:assets_w$} {:findings_w$} {:evidence_w$}",
             "MODULE".bold(),
             "ASSETS".bold(),
             "FINDINGS".bold(),
@@ -1133,8 +1172,8 @@ impl Menu {
         println!("  {}", self.line().dimmed());
         for module in modules {
             println!(
-                "  {:30} {:8} {:8} {:8}",
-                Self::truncate_chars(&module.module, 30),
+                "  {:module_w$} {:assets_w$} {:findings_w$} {:evidence_w$}",
+                Self::truncate_chars(&module.module, module_w),
                 module.assets_discovered,
                 module.findings_created,
                 module.evidence_collected
@@ -1143,12 +1182,167 @@ impl Menu {
         println!("  {}", self.line().dimmed());
     }
 
+    fn module_column_widths(&self) -> (usize, usize, usize, usize) {
+        let content_w = self.terminal_content_width(64);
+        let assets_w = 8usize;
+        let findings_w = 8usize;
+        let evidence_w = 8usize;
+        let spacing = 3usize;
+        let used = assets_w + findings_w + evidence_w + spacing;
+        let module_w = content_w.saturating_sub(used).max(20);
+        (module_w, assets_w, findings_w, evidence_w)
+    }
+
     fn module_summaries_from_metadata(metadata: &serde_json::Value) -> Vec<ModuleSummary> {
         metadata
             .get("module_summaries")
             .cloned()
             .and_then(|value| serde_json::from_value::<Vec<ModuleSummary>>(value).ok())
             .unwrap_or_default()
+    }
+
+    fn show_metadata_context(&self, metadata: &serde_json::Value) {
+        if let Some(duration_ms) = metadata.get("duration_ms").and_then(|v| v.as_u64()) {
+            println!("  {} {} ms", "Duration:".bold(), duration_ms);
+        }
+        if let Some(executed) = metadata.get("modules_executed").and_then(|v| v.as_u64()) {
+            println!("  {} {}", "Modules executed:".bold(), executed);
+        }
+
+        if let Some(totals_obj) = metadata.get("severity_totals").and_then(|v| v.as_object()) {
+            let critical = totals_obj
+                .get("critical")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let high = totals_obj.get("high").and_then(|v| v.as_u64()).unwrap_or(0);
+            let medium = totals_obj
+                .get("medium")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let low = totals_obj.get("low").and_then(|v| v.as_u64()).unwrap_or(0);
+            let info = totals_obj.get("info").and_then(|v| v.as_u64()).unwrap_or(0);
+            println!(
+                "  {} critical={} high={} medium={} low={} info={}",
+                "Severity totals:".bold(),
+                critical.to_string().red().bold(),
+                high.to_string().red(),
+                medium.to_string().yellow(),
+                low.to_string().green(),
+                info
+            );
+        }
+
+        if let Some(top_findings) = metadata.get("top_findings").and_then(|v| v.as_array()) {
+            if !top_findings.is_empty() {
+                println!("  {}", "Top findings:".bold());
+                for finding in top_findings.iter().take(5) {
+                    let severity = finding
+                        .get("severity")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("info");
+                    let title = finding
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let asset = finding
+                        .get("asset")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    println!(
+                        "    • {:10} {} ({})",
+                        Self::severity_label(severity),
+                        Self::truncate_chars(title, 42),
+                        Self::truncate_chars(asset, 28)
+                    );
+                }
+            }
+        }
+    }
+
+    async fn finding_detail_drilldown(
+        &self,
+        storage: &Storage,
+        findings: &[FindingSummary],
+    ) -> Result<()> {
+        if findings.is_empty() {
+            return Ok(());
+        }
+        if !self.confirm("View detailed finding context?") {
+            return Ok(());
+        }
+
+        loop {
+            let mut options: Vec<String> = findings
+                .iter()
+                .map(|finding| {
+                    format!(
+                        "[{}] {} ({})",
+                        finding.severity,
+                        Self::truncate_chars(&finding.title, 46),
+                        Self::truncate_chars(&finding.asset, 24)
+                    )
+                })
+                .collect();
+            options.push("↩ Back".to_string());
+
+            let Some(choice) = self.select_index_owned("Select finding for details", &options, 0)
+            else {
+                break;
+            };
+            if choice >= findings.len() {
+                break;
+            }
+
+            let selected = &findings[choice];
+            match storage.get_finding(&selected.id).await? {
+                Some(finding) => {
+                    self.print_banner();
+                    self.print_header("Finding Details");
+                    println!("  {} {}", "ID:".bold(), finding.id);
+                    println!("  {} {}", "Severity:".bold(), finding.severity);
+                    println!("  {} {}", "Type:".bold(), finding.finding_type);
+                    println!("  {} {}", "Asset:".bold(), finding.asset);
+                    println!("  {} {}", "Title:".bold(), finding.title);
+                    println!("  {} {}", "Source:".bold(), finding.source);
+                    println!("  {} {}", "Method:".bold(), finding.method);
+                    println!("  {} {}%", "Confidence:".bold(), finding.confidence);
+                    println!("  {} {}", "Description:".bold(), finding.description);
+                    println!("  {} {}", "Impact:".bold(), finding.impact);
+                    if let Some(repro) = finding.reproduction.as_deref() {
+                        println!("  {} {}", "Reproduction:".bold(), repro);
+                    }
+                    println!("  {}", self.line().dimmed());
+                    println!(
+                        "  {} {}",
+                        "Evidence entries:".bold(),
+                        finding.evidence.len()
+                    );
+                    for evidence in finding.evidence.iter().take(6) {
+                        println!(
+                            "  • {} | {}",
+                            evidence.source.cyan(),
+                            Self::truncate_chars(
+                                evidence.description.as_str(),
+                                self.terminal_content_width(24).saturating_sub(22),
+                            )
+                        );
+                        if let Some(data) = evidence.data.as_deref() {
+                            println!(
+                                "    {}",
+                                Self::truncate_chars(
+                                    data,
+                                    self.terminal_content_width(24).saturating_sub(10)
+                                )
+                            );
+                        }
+                    }
+                }
+                None => self.show_warning("Finding no longer exists"),
+            }
+            self.wait_enter();
+        }
+
+        Ok(())
     }
 
     fn prompt_scan_run(&self, prompt: &str, runs: &[ScanRunInfo]) -> Option<String> {
@@ -1374,6 +1568,21 @@ impl Menu {
                                                     "Module breakdown",
                                                     &summary.module_summaries,
                                                 );
+                                                let active_modules = summary
+                                                    .module_summaries
+                                                    .iter()
+                                                    .filter(|module| {
+                                                        module.assets_discovered > 0
+                                                            || module.findings_created > 0
+                                                            || module.evidence_collected > 0
+                                                    })
+                                                    .count();
+                                                println!(
+                                                    "  {} {}/{}",
+                                                    "Active modules:".bold(),
+                                                    active_modules,
+                                                    summary.module_summaries.len()
+                                                );
 
                                                 match storage
                                                     .list_findings(
@@ -1427,6 +1636,18 @@ impl Menu {
                                                             info
                                                         );
                                                         println!();
+                                                        if let Err(e) = self
+                                                            .finding_detail_drilldown(
+                                                                &storage,
+                                                                &findings,
+                                                            )
+                                                            .await
+                                                        {
+                                                            self.show_error(&format!(
+                                                                "Failed to load finding details: {}",
+                                                                e
+                                                            ));
+                                                        }
                                                     }
                                                     Ok(_) => {
                                                         self.show_info("No findings were generated for this run");
@@ -1533,6 +1754,7 @@ impl Menu {
                                                 evidence_count
                                             );
                                         }
+                                        self.show_metadata_context(&metadata);
                                         let modules =
                                             Self::module_summaries_from_metadata(&metadata);
                                         if !modules.is_empty() {
@@ -1570,6 +1792,14 @@ impl Menu {
                                             })
                                             .collect();
                                         self.show_findings_table(&rows);
+                                        if let Err(e) =
+                                            self.finding_detail_drilldown(storage, &findings).await
+                                        {
+                                            self.show_error(&format!(
+                                                "Failed to load finding details: {}",
+                                                e
+                                            ));
+                                        }
                                     }
                                 } else {
                                     self.show_warning("Selected run not found");
@@ -1682,6 +1912,7 @@ impl Menu {
         storage.update_scan_progress(&run_id, 10).await?;
         self.show_info(&format!("Toolkit Run ID: {}", run_id));
 
+        let toolkit_started = Instant::now();
         let engine =
             OsintToolkitEngine::new(scope.clone(), policy, storage.clone(), Some(&run_id))?;
         let module_summaries = match if let Some(selected_suite) = suite {
@@ -1715,6 +1946,24 @@ impl Menu {
             )
             .await?;
         let findings_count = findings.len();
+        let mut severity_totals = BTreeMap::new();
+        for finding in &findings {
+            *severity_totals
+                .entry(finding.severity.clone())
+                .or_insert(0usize) += 1;
+        }
+        let top_findings = findings
+            .iter()
+            .take(8)
+            .map(|finding| {
+                json!({
+                    "id": finding.id,
+                    "severity": finding.severity,
+                    "title": finding.title,
+                    "asset": finding.asset,
+                })
+            })
+            .collect::<Vec<_>>();
         let assets_count = module_summaries
             .iter()
             .map(|summary| summary.assets_discovered)
@@ -1723,6 +1972,7 @@ impl Menu {
             .iter()
             .map(|summary| summary.evidence_collected)
             .sum::<usize>();
+        let duration_ms = toolkit_started.elapsed().as_millis() as u64;
 
         storage
             .update_scan_metadata(
@@ -1734,6 +1984,9 @@ impl Menu {
                     "module_summaries": module_summaries,
                     "suite": suite_label,
                     "profile": if aggressive { "aggressive" } else { "thorough" },
+                    "severity_totals": severity_totals,
+                    "top_findings": top_findings,
+                    "duration_ms": duration_ms,
                 }),
             )
             .await?;
@@ -1763,6 +2016,9 @@ impl Menu {
                 })
                 .collect();
             self.show_findings_table(&rows);
+            if let Err(e) = self.finding_detail_drilldown(&storage, &findings).await {
+                self.show_error(&format!("Failed to load finding details: {}", e));
+            }
         } else {
             self.show_info("No findings generated for this toolkit run");
         }
@@ -1798,6 +2054,7 @@ impl Menu {
         };
 
         if let Some(metadata) = storage.get_scan_metadata(&run_id).await? {
+            self.show_metadata_context(&metadata);
             let modules = Self::module_summaries_from_metadata(&metadata);
             if !modules.is_empty() {
                 self.show_module_breakdown("Toolkit module breakdown", &modules);
@@ -1832,6 +2089,9 @@ impl Menu {
                 })
                 .collect();
             self.show_findings_table(&rows);
+            if let Err(e) = self.finding_detail_drilldown(&storage, &findings).await {
+                self.show_error(&format!("Failed to load finding details: {}", e));
+            }
         }
         self.wait_enter();
         Ok(())
@@ -2026,6 +2286,14 @@ impl Menu {
                                     })
                                     .collect();
                                 self.show_findings_table(&rows);
+                                if let Err(e) =
+                                    self.finding_detail_drilldown(storage, &filtered).await
+                                {
+                                    self.show_error(&format!(
+                                        "Failed to load finding details: {}",
+                                        e
+                                    ));
+                                }
                                 println!("  {} {}", "Alert threshold:".bold(), threshold.cyan());
                             }
                         }
@@ -2495,10 +2763,20 @@ impl Menu {
                         self.show_info("No findings yet. Run a scan first.");
                     } else {
                         let rows: Vec<(String, String, String, String)> = findings
-                            .into_iter()
-                            .map(|f| (f.id, f.severity, f.title, f.asset))
+                            .iter()
+                            .map(|f| {
+                                (
+                                    f.id.clone(),
+                                    f.severity.clone(),
+                                    f.title.clone(),
+                                    f.asset.clone(),
+                                )
+                            })
                             .collect();
                         self.show_findings_table(&rows);
+                        if let Err(e) = self.finding_detail_drilldown(storage, &findings).await {
+                            self.show_error(&format!("Failed to load finding details: {}", e));
+                        }
                     }
                 }
                 Err(e) => self.show_error(&format!("Failed to load findings: {}", e)),
@@ -2890,5 +3168,27 @@ mod tests {
     fn test_severity_label_retains_text() {
         assert!(Menu::severity_label("critical").contains("critical"));
         assert!(Menu::severity_label("info").contains("info"));
+    }
+
+    #[test]
+    fn test_table_width_allocations_are_sane() {
+        let menu = Menu::new();
+        let (id_w, sev_w, title_w, asset_w) = menu.findings_column_widths();
+        assert!(id_w >= 8);
+        assert!(sev_w >= 8);
+        assert!(title_w > 0);
+        assert!(asset_w > 0);
+
+        let (module_w, assets_w, findings_w, evidence_w) = menu.module_column_widths();
+        assert!(module_w >= 10);
+        assert_eq!(assets_w, 8);
+        assert_eq!(findings_w, 8);
+        assert_eq!(evidence_w, 8);
+    }
+
+    #[test]
+    fn test_truncation_uses_ellipsis() {
+        assert_eq!(Menu::truncate_chars("abcdef", 5), "ab...");
+        assert_eq!(Menu::truncate_chars("abc", 5), "abc");
     }
 }

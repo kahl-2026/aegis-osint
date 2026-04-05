@@ -2,6 +2,7 @@
 
 use crate::policy::PolicyEngine;
 use crate::storage::{FindingContext, Storage};
+use crate::utils::terminal::{content_width, truncate_ellipsis};
 use crate::{offensive::orchestrator, storage::ModuleSummary};
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
@@ -124,7 +125,7 @@ impl OffensiveCommand {
 
         // Display scope validation header
         println!("{}", "⚠️  SCOPE VALIDATION".yellow().bold());
-        println!("{}", "─".repeat(60));
+        println!("{}", Self::separator_line());
 
         // Look up the scope
         let scope_id = args.scope.clone().unwrap_or_else(|| args.program.clone());
@@ -157,7 +158,7 @@ impl OffensiveCommand {
             scope.cidr_count
         );
         println!("  {} {:?}", "Profile:".bold(), args.profile);
-        println!("{}", "─".repeat(60));
+        println!("{}", Self::separator_line());
         println!();
 
         // Check policy allows this operation
@@ -221,7 +222,7 @@ impl OffensiveCommand {
                 println!("{}", "✓ Scan completed".green().bold());
                 println!();
                 println!("{}", "Scan Summary".bold().underline());
-                println!("{}", "─".repeat(60).dimmed());
+                println!("{}", Self::separator_line().dimmed());
                 println!("  {:24} {}", "Program".bold(), args.program.cyan());
                 println!("  {:24} {}", "Scope ID".bold(), scope_id.cyan());
                 println!("  {:24} {}", "Run ID".bold(), run_id.cyan());
@@ -242,8 +243,23 @@ impl OffensiveCommand {
                     summary.evidence_count
                 );
                 println!("  {:24} {:.2}s", "Duration".bold(), summary.duration_secs);
-                println!("{}", "─".repeat(60).dimmed());
+                println!("{}", Self::separator_line().dimmed());
                 Self::print_module_breakdown(&summary.module_summaries);
+                let active_modules = summary
+                    .module_summaries
+                    .iter()
+                    .filter(|module| {
+                        module.assets_discovered > 0
+                            || module.findings_created > 0
+                            || module.evidence_collected > 0
+                    })
+                    .count();
+                println!(
+                    "  {:24} {}/{}",
+                    "Active modules".bold(),
+                    active_modules,
+                    summary.module_summaries.len()
+                );
 
                 if let Ok(recent) = storage
                     .list_findings(
@@ -453,10 +469,14 @@ impl OffensiveCommand {
             return;
         }
 
+        let width = Self::line_width();
+        let metrics_w = 8usize;
+        let spacing = 3usize;
+        let module_w = width.saturating_sub(metrics_w * 3 + spacing).max(22);
         println!("{}", "Module breakdown".bold());
-        println!("{}", "─".repeat(60).dimmed());
+        println!("{}", Self::separator_line().dimmed());
         println!(
-            "  {:28} {:8} {:8} {:8}",
+            "  {:module_w$} {:metrics_w$} {:metrics_w$} {:metrics_w$}",
             "MODULE".bold(),
             "ASSETS".bold(),
             "FINDINGS".bold(),
@@ -464,14 +484,22 @@ impl OffensiveCommand {
         );
         for module in module_summaries {
             println!(
-                "  {:28} {:8} {:8} {:8}",
-                module.module,
+                "  {:module_w$} {:metrics_w$} {:metrics_w$} {:metrics_w$}",
+                truncate_ellipsis(&module.module, module_w),
                 module.assets_discovered,
                 module.findings_created,
                 module.evidence_collected
             );
         }
-        println!("{}", "─".repeat(60).dimmed());
+        println!("{}", Self::separator_line().dimmed());
+    }
+
+    fn line_width() -> usize {
+        content_width(96, 0, 48)
+    }
+
+    fn separator_line() -> String {
+        "─".repeat(Self::line_width())
     }
 }
 

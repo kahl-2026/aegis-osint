@@ -74,7 +74,7 @@ cargo install --path .
 # Fedora: sudo dnf install gcc sqlite-devel openssl-devel bind-utils whois pkgconfig git curl
 ```
 
-The interactive CLI experience uses a full-screen keyboard-first TUI (ratatui/crossterm) with a compact top status bar, richer context panels, and arrow/enter/esc navigation for faster workflows.
+The interactive CLI experience uses a full-screen keyboard-first TUI (ratatui/crossterm) with a compact top status bar, richer context panels, width-aware autoscaling to terminal size, and arrow/enter/esc navigation for faster workflows.
 
 ## Quick Start
 
@@ -109,6 +109,7 @@ aegis offensive run --program "Example" --scope scope-id-123 --profile aggressiv
 ```
 
 Thorough (Deep) and Aggressive profiles execute the full available module stack, including dedicated OSINT intelligence suites.
+Post-scan summaries include module breakdowns, severity totals, evidence counts, and optional finding detail drill-down.
 
 ### 4. Monitor Defensively
 
