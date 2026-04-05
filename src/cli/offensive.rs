@@ -2,6 +2,7 @@
 
 use crate::policy::PolicyEngine;
 use crate::storage::{FindingContext, Storage};
+use crate::{offensive::orchestrator, storage::ModuleSummary};
 use anyhow::Result;
 use clap::{Args, Subcommand, ValueEnum};
 use colored::Colorize;
@@ -235,8 +236,14 @@ impl OffensiveCommand {
                     "Findings created".bold(),
                     summary.findings_count
                 );
+                println!(
+                    "  {:24} {}",
+                    "Evidence collected".bold(),
+                    summary.evidence_count
+                );
                 println!("  {:24} {:.2}s", "Duration".bold(), summary.duration_secs);
                 println!("{}", "─".repeat(60).dimmed());
+                Self::print_module_breakdown(&summary.module_summaries);
 
                 if let Ok(recent) = storage
                     .list_findings(
@@ -435,66 +442,36 @@ impl OffensiveCommand {
     }
 
     fn get_modules_for_profile(profile: ScanProfile) -> Vec<&'static str> {
-        match profile {
-            ScanProfile::Safe => vec![
-                "ct-logs",
-                "dns-records",
-                "dns-posture-checks",
-                "whois",
-                "public-metadata",
-                "historical-dns",
-            ],
-            ScanProfile::Standard => vec![
-                "ct-logs",
-                "dns-records",
-                "dns-posture-checks",
-                "whois",
-                "public-metadata",
-                "historical-dns",
-                "service-fingerprint",
-                "header-analysis",
-                "js-analysis",
-                "http-method-analysis",
-                "cloud-exposure",
-            ],
-            ScanProfile::Thorough => vec![
-                "ct-logs",
-                "dns-records",
-                "dns-posture-checks",
-                "asn-mapping",
-                "whois",
-                "public-metadata",
-                "historical-dns",
-                "service-fingerprint",
-                "header-analysis",
-                "js-analysis",
-                "http-method-analysis",
-                "cloud-exposure",
-                "subdomain-bruteforce",
-                "port-scan",
-                "tech-fingerprint",
-                "historical-correlation",
-                "repo-scan",
-            ],
-            ScanProfile::Aggressive => vec![
-                "ct-logs",
-                "dns-records",
-                "dns-posture-checks",
-                "asn-mapping",
-                "whois",
-                "public-metadata",
-                "historical-dns",
-                "service-fingerprint (expanded ports)",
-                "header-analysis",
-                "js-analysis",
-                "http-method-analysis",
-                "cloud-exposure",
-                "aggressive-path-probing",
-                "subdomain-permutation-enum",
-                "historical-correlation",
-                "repo-scan",
-            ],
+        orchestrator::modules_for_profile(profile)
+            .into_iter()
+            .map(orchestrator::ReconModule::label)
+            .collect()
+    }
+
+    fn print_module_breakdown(module_summaries: &[ModuleSummary]) {
+        if module_summaries.is_empty() {
+            return;
         }
+
+        println!("{}", "Module breakdown".bold());
+        println!("{}", "─".repeat(60).dimmed());
+        println!(
+            "  {:28} {:8} {:8} {:8}",
+            "MODULE".bold(),
+            "ASSETS".bold(),
+            "FINDINGS".bold(),
+            "EVIDENCE".bold()
+        );
+        for module in module_summaries {
+            println!(
+                "  {:28} {:8} {:8} {:8}",
+                module.module,
+                module.assets_discovered,
+                module.findings_created,
+                module.evidence_collected
+            );
+        }
+        println!("{}", "─".repeat(60).dimmed());
     }
 }
 
@@ -505,8 +482,10 @@ mod tests {
     #[test]
     fn aggressive_profile_includes_expanded_modules() {
         let modules = OffensiveCommand::get_modules_for_profile(ScanProfile::Aggressive);
-        assert!(modules.contains(&"aggressive-path-probing"));
-        assert!(modules.contains(&"subdomain-permutation-enum"));
+        assert!(modules.contains(&"dns-intelligence-suite"));
+        assert!(modules.contains(&"repo-intelligence-suite"));
+        assert!(modules.contains(&"tls-infra-intelligence-suite"));
+        assert!(modules.contains(&"leak-mention-intelligence-suite"));
         assert!(modules.contains(&"historical-correlation"));
     }
 }

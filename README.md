@@ -22,6 +22,8 @@ By using this software, you acknowledge that you understand and will comply with
 - **Asset Discovery**: CT log enumeration, DNS resolution, ASN mapping
 - **Web Reconnaissance**: Header analysis, endpoint discovery, technology fingerprinting
 - **Cloud Exposure**: S3/Azure/GCP bucket enumeration, public repo scanning
+- **Expanded Intelligence Suites**: DNS intelligence, repository intelligence, TLS/infrastructure intelligence, leak/mention intelligence
+- **Run Telemetry & Evidence**: Per-module asset/finding/evidence breakdown persisted per scan run
 - **Scope Enforcement**: Hard validation of authorized targets before any operation
 
 ### Defensive OSINT (Blue Team)
@@ -105,6 +107,8 @@ aegis offensive run --program "Example" --scope scope-id-123 --profile safe
 # Aggressive profile (expanded active probing, explicit opt-in)
 aegis offensive run --program "Example" --scope scope-id-123 --profile aggressive
 ```
+
+Thorough (Deep) and Aggressive profiles execute the full available module stack, including dedicated OSINT intelligence suites.
 
 ### 4. Monitor Defensively
 
@@ -191,6 +195,13 @@ aegis doctor                         Health check
 aegis init                           First-run authorization flow
 aegis menu                           Launch full-screen interactive TUI
 ```
+
+In the interactive TUI, the **OSINT Toolkit** menu provides dedicated suite execution options:
+- DNS Intelligence Suite
+- Repository Intelligence Suite
+- TLS/Infrastructure Intelligence Suite
+- Leak/Mention Intelligence Suite
+- Full-suite execution with run-level module/evidence breakdown
 
 ## Scope File Format
 

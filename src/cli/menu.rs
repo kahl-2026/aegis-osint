@@ -3,11 +3,12 @@
 use super::offensive::ScanProfile;
 use crate::config::{data_dir, Config};
 use crate::defensive::{DefensiveOrchestrator, DefensiveScanner};
+use crate::offensive::toolkit::{OsintToolkitEngine, ToolkitSuite};
 use crate::offensive::OffensiveOrchestrator;
 use crate::policy::PolicyEngine;
 use crate::reporting::ReportGenerator;
 use crate::scope::{Scope, ScopeDefinition, ScopeEngine, ScopeItem, ScopeItemType};
-use crate::storage::{FindingContext, MonitorInfo, ScanRunInfo, Storage};
+use crate::storage::{FindingContext, ModuleSummary, MonitorInfo, ScanRunInfo, Storage};
 use crate::utils::validation::{validate_asn, validate_cidr, validate_domain, validate_url};
 use anyhow::Result;
 use chrono::Utc;
@@ -23,6 +24,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Terminal;
+use serde_json::json;
 use std::io::{self, Write};
 use std::time::Duration;
 
@@ -43,6 +45,7 @@ enum NavigationKey {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MainMenuOption {
     OffensiveMode,
+    OsintToolkit,
     DefensiveMode,
     ManageScopes,
     ViewFindings,
@@ -60,6 +63,18 @@ pub enum OffensiveMenuOption {
     ViewStatus,
     StopScan,
     ViewResults,
+    Back,
+}
+
+/// OSINT toolkit menu options
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OsintToolkitMenuOption {
+    RunAllSuites,
+    RunDnsSuite,
+    RunRepoSuite,
+    RunTlsSuite,
+    RunLeakSuite,
+    ViewSuiteResults,
     Back,
 }
 
@@ -390,6 +405,8 @@ impl Menu {
     fn menu_item_details(item: &str) -> &'static str {
         if item.contains("Offensive Recon") {
             "Run authorized recon scans and inspect detailed findings."
+        } else if item.contains("OSINT Toolkit") {
+            "Run dedicated DNS, repo, TLS, and leak intelligence suites."
         } else if item.contains("Defensive Monitor") {
             "Monitor external surface changes, drift, and alerting status."
         } else if item.contains("Manage Scopes") {
@@ -450,6 +467,7 @@ impl Menu {
         self.print_header("Main Menu");
         let options = [
             "🎯 Offensive Recon — Bug bounty reconnaissance operations",
+            "🧰 OSINT Toolkit — Dedicated intelligence suite execution",
             "🛡️ Defensive Monitor — Attack surface monitoring",
             "📋 Manage Scopes — Import, view, and validate scopes",
             "🔍 View Findings — Browse and verify discoveries",
@@ -461,13 +479,14 @@ impl Menu {
         ];
         match self.select_index("Select option", &options, 0) {
             0 => MainMenuOption::OffensiveMode,
-            1 => MainMenuOption::DefensiveMode,
-            2 => MainMenuOption::ManageScopes,
-            3 => MainMenuOption::ViewFindings,
-            4 => MainMenuOption::GenerateReports,
-            5 => MainMenuOption::ManageAssets,
-            6 => MainMenuOption::Settings,
-            7 => MainMenuOption::Help,
+            1 => MainMenuOption::OsintToolkit,
+            2 => MainMenuOption::DefensiveMode,
+            3 => MainMenuOption::ManageScopes,
+            4 => MainMenuOption::ViewFindings,
+            5 => MainMenuOption::GenerateReports,
+            6 => MainMenuOption::ManageAssets,
+            7 => MainMenuOption::Settings,
+            8 => MainMenuOption::Help,
             _ => MainMenuOption::Quit,
         }
     }
@@ -489,6 +508,30 @@ impl Menu {
             2 => OffensiveMenuOption::StopScan,
             3 => OffensiveMenuOption::ViewResults,
             _ => OffensiveMenuOption::Back,
+        }
+    }
+
+    /// Show OSINT toolkit menu
+    pub fn osint_toolkit_menu(&self) -> OsintToolkitMenuOption {
+        self.print_banner();
+        self.print_header("OSINT Toolkit 🧰");
+        let options = [
+            "▶ Run All Intelligence Suites — DNS + Repo + TLS + Leak/Mention",
+            "🌐 Run DNS Intelligence Suite — DNS posture, wildcard, takeover heuristics",
+            "🧬 Run Repo Intelligence Suite — Public repo metadata and artifact exposure",
+            "🔐 Run TLS/Infra Intelligence Suite — Certificate and infrastructure posture",
+            "📰 Run Leak/Mention Suite — Public mention correlation and leak signals",
+            "📋 View Toolkit Run Results — Inspect prior suite run findings",
+            "↩ Back to Main Menu",
+        ];
+        match self.select_index("Select option", &options, 0) {
+            0 => OsintToolkitMenuOption::RunAllSuites,
+            1 => OsintToolkitMenuOption::RunDnsSuite,
+            2 => OsintToolkitMenuOption::RunRepoSuite,
+            3 => OsintToolkitMenuOption::RunTlsSuite,
+            4 => OsintToolkitMenuOption::RunLeakSuite,
+            5 => OsintToolkitMenuOption::ViewSuiteResults,
+            _ => OsintToolkitMenuOption::Back,
         }
     }
 
@@ -554,6 +597,12 @@ impl Menu {
             "Offensive Mode".cyan()
         );
         println!("    Asset discovery, web recon, cloud exposure checks");
+        println!();
+        println!(
+            "  • {} - Dedicated intelligence suites",
+            "OSINT Toolkit".cyan()
+        );
+        println!("    DNS intel, repo intel, TLS/infra intel, leak/mention correlation");
         println!();
         println!(
             "  • {} - External attack surface monitoring",
@@ -1067,6 +1116,41 @@ impl Menu {
         println!();
     }
 
+    fn show_module_breakdown(&self, title: &str, modules: &[ModuleSummary]) {
+        if modules.is_empty() {
+            return;
+        }
+        println!();
+        println!("  {}", title.bold());
+        println!("  {}", self.line().dimmed());
+        println!(
+            "  {:30} {:8} {:8} {:8}",
+            "MODULE".bold(),
+            "ASSETS".bold(),
+            "FINDINGS".bold(),
+            "EVIDENCE".bold()
+        );
+        println!("  {}", self.line().dimmed());
+        for module in modules {
+            println!(
+                "  {:30} {:8} {:8} {:8}",
+                Self::truncate_chars(&module.module, 30),
+                module.assets_discovered,
+                module.findings_created,
+                module.evidence_collected
+            );
+        }
+        println!("  {}", self.line().dimmed());
+    }
+
+    fn module_summaries_from_metadata(metadata: &serde_json::Value) -> Vec<ModuleSummary> {
+        metadata
+            .get("module_summaries")
+            .cloned()
+            .and_then(|value| serde_json::from_value::<Vec<ModuleSummary>>(value).ok())
+            .unwrap_or_default()
+    }
+
     fn prompt_scan_run(&self, prompt: &str, runs: &[ScanRunInfo]) -> Option<String> {
         if runs.is_empty() {
             return None;
@@ -1130,6 +1214,9 @@ impl Menu {
             match self.main_menu() {
                 MainMenuOption::OffensiveMode => {
                     self.run_offensive_menu().await?;
+                }
+                MainMenuOption::OsintToolkit => {
+                    self.run_osint_toolkit_menu().await?;
                 }
                 MainMenuOption::DefensiveMode => {
                     self.run_defensive_menu().await?;
@@ -1278,6 +1365,15 @@ impl Menu {
                                                     "Duration:".bold(),
                                                     summary.duration_secs
                                                 );
+                                                println!(
+                                                    "  {} {}",
+                                                    "Evidence collected:".bold(),
+                                                    summary.evidence_count
+                                                );
+                                                self.show_module_breakdown(
+                                                    "Module breakdown",
+                                                    &summary.module_summaries,
+                                                );
 
                                                 match storage
                                                     .list_findings(
@@ -1425,6 +1521,27 @@ impl Menu {
                                 self.prompt_scan_run("Select run to view findings", &scans)
                             {
                                 if let Some(run) = storage.get_scan_run(&run_id).await? {
+                                    if let Some(metadata) =
+                                        storage.get_scan_metadata(&run.id).await?
+                                    {
+                                        if let Some(evidence_count) =
+                                            metadata.get("evidence_count").and_then(|v| v.as_u64())
+                                        {
+                                            println!(
+                                                "  {} {}",
+                                                "Evidence collected:".bold(),
+                                                evidence_count
+                                            );
+                                        }
+                                        let modules =
+                                            Self::module_summaries_from_metadata(&metadata);
+                                        if !modules.is_empty() {
+                                            self.show_module_breakdown(
+                                                "Run module breakdown",
+                                                &modules,
+                                            );
+                                        }
+                                    }
                                     let findings = storage
                                         .list_findings(
                                             None,
@@ -1467,6 +1584,256 @@ impl Menu {
                 OffensiveMenuOption::Back => break,
             }
         }
+        Ok(())
+    }
+
+    async fn run_osint_toolkit_menu(&mut self) -> Result<()> {
+        loop {
+            match self.osint_toolkit_menu() {
+                OsintToolkitMenuOption::RunAllSuites => {
+                    self.run_toolkit_scan(None).await?;
+                }
+                OsintToolkitMenuOption::RunDnsSuite => {
+                    self.run_toolkit_scan(Some(ToolkitSuite::DnsIntelligence))
+                        .await?;
+                }
+                OsintToolkitMenuOption::RunRepoSuite => {
+                    self.run_toolkit_scan(Some(ToolkitSuite::RepoIntelligence))
+                        .await?;
+                }
+                OsintToolkitMenuOption::RunTlsSuite => {
+                    self.run_toolkit_scan(Some(ToolkitSuite::TlsInfrastructure))
+                        .await?;
+                }
+                OsintToolkitMenuOption::RunLeakSuite => {
+                    self.run_toolkit_scan(Some(ToolkitSuite::LeakMentions))
+                        .await?;
+                }
+                OsintToolkitMenuOption::ViewSuiteResults => {
+                    self.run_toolkit_results_view().await?;
+                }
+                OsintToolkitMenuOption::Back => break,
+            }
+        }
+        Ok(())
+    }
+
+    async fn run_toolkit_scan(&mut self, suite: Option<ToolkitSuite>) -> Result<()> {
+        self.show_info("Starting OSINT toolkit workflow...");
+        let scopes = self.get_scope_list().await;
+        let Some(scope_id) = self.prompt_scope(&scopes) else {
+            self.wait_enter();
+            return Ok(());
+        };
+
+        let intensity_options = [
+            "thorough — run full suite coverage with balanced depth",
+            "aggressive — run maximum-depth suite analysis",
+        ];
+        let aggressive = self.select_index("Select toolkit intensity", &intensity_options, 0) == 1;
+        let suite_label = suite
+            .map(ToolkitSuite::label)
+            .unwrap_or("all-intelligence-suites");
+        if !self.confirm(&format!(
+            "Start toolkit scan '{}' with {} profile?",
+            suite_label,
+            if aggressive { "aggressive" } else { "thorough" }
+        )) {
+            self.wait_enter();
+            return Ok(());
+        }
+
+        let Some(storage) = self.storage.clone() else {
+            self.show_error("Storage not initialized");
+            self.wait_enter();
+            return Ok(());
+        };
+        let Some(config) = self.config.clone() else {
+            self.show_error("Config not initialized");
+            self.wait_enter();
+            return Ok(());
+        };
+
+        let Some(scope) = storage.get_scope(&scope_id).await? else {
+            self.show_error("Selected scope not found");
+            self.wait_enter();
+            return Ok(());
+        };
+        let policy = PolicyEngine::new(&config, &storage).await?;
+        let program_name = scope
+            .program
+            .clone()
+            .unwrap_or_else(|| "osint-toolkit".to_string());
+        let policy_check = policy
+            .check_offensive_operation(&program_name, &scope)
+            .await?;
+        if !policy_check.allowed {
+            self.show_error("Toolkit run blocked by policy");
+            for reason in policy_check.reasons {
+                println!("  {} {}", "•".red(), reason);
+            }
+            self.wait_enter();
+            return Ok(());
+        }
+
+        let run_id = storage
+            .create_scan_run(&program_name, &scope.id, "osint-toolkit")
+            .await?;
+        storage.update_scan_progress(&run_id, 10).await?;
+        self.show_info(&format!("Toolkit Run ID: {}", run_id));
+
+        let engine =
+            OsintToolkitEngine::new(scope.clone(), policy, storage.clone(), Some(&run_id))?;
+        let module_summaries = match if let Some(selected_suite) = suite {
+            engine
+                .run_suite(selected_suite, aggressive)
+                .await
+                .map(|summary| vec![summary])
+        } else {
+            engine.run_all(aggressive).await
+        } {
+            Ok(summaries) => summaries,
+            Err(e) => {
+                let _ = storage.update_scan_status(&run_id, "failed").await;
+                self.show_error(&format!("Toolkit scan failed: {}", e));
+                self.wait_enter();
+                return Ok(());
+            }
+        };
+
+        let findings = storage
+            .list_findings(
+                None,
+                FindingContext {
+                    scope: Some(&scope.id),
+                    run: Some(&run_id),
+                },
+                None,
+                None,
+                10_000,
+                "severity",
+            )
+            .await?;
+        let findings_count = findings.len();
+        let assets_count = module_summaries
+            .iter()
+            .map(|summary| summary.assets_discovered)
+            .sum::<usize>();
+        let evidence_count = module_summaries
+            .iter()
+            .map(|summary| summary.evidence_collected)
+            .sum::<usize>();
+
+        storage
+            .update_scan_metadata(
+                &run_id,
+                &json!({
+                    "assets_count": assets_count,
+                    "findings_count": findings_count,
+                    "evidence_count": evidence_count,
+                    "module_summaries": module_summaries,
+                    "suite": suite_label,
+                    "profile": if aggressive { "aggressive" } else { "thorough" },
+                }),
+            )
+            .await?;
+        storage
+            .update_scan_findings_count(&run_id, findings_count as i32)
+            .await?;
+        storage.update_scan_progress(&run_id, 100).await?;
+        storage.update_scan_status(&run_id, "completed").await?;
+
+        self.show_success("Toolkit scan completed");
+        println!();
+        println!("  {} {}", "Assets touched:".bold(), assets_count);
+        println!("  {} {}", "Findings recorded:".bold(), findings_count);
+        println!("  {} {}", "Evidence collected:".bold(), evidence_count);
+        self.show_module_breakdown("Toolkit suite breakdown", &module_summaries);
+
+        if !findings.is_empty() {
+            let rows: Vec<(String, String, String, String)> = findings
+                .iter()
+                .map(|f| {
+                    (
+                        f.id.clone(),
+                        f.severity.clone(),
+                        f.title.clone(),
+                        f.asset.clone(),
+                    )
+                })
+                .collect();
+            self.show_findings_table(&rows);
+        } else {
+            self.show_info("No findings generated for this toolkit run");
+        }
+
+        self.wait_enter();
+        Ok(())
+    }
+
+    async fn run_toolkit_results_view(&mut self) -> Result<()> {
+        let Some(storage) = self.storage.clone() else {
+            self.show_error("Storage not initialized");
+            self.wait_enter();
+            return Ok(());
+        };
+
+        let mut runs = storage.list_scan_runs(None, 200).await?;
+        runs.retain(|run| run.run_type == "osint-toolkit");
+        if runs.is_empty() {
+            self.show_info("No toolkit runs recorded yet");
+            self.wait_enter();
+            return Ok(());
+        }
+
+        self.show_scan_runs_table("Toolkit Runs 📋", &runs);
+        let Some(run_id) = self.prompt_scan_run("Select toolkit run", &runs) else {
+            self.wait_enter();
+            return Ok(());
+        };
+        let Some(run) = storage.get_scan_run(&run_id).await? else {
+            self.show_warning("Selected run no longer exists");
+            self.wait_enter();
+            return Ok(());
+        };
+
+        if let Some(metadata) = storage.get_scan_metadata(&run_id).await? {
+            let modules = Self::module_summaries_from_metadata(&metadata);
+            if !modules.is_empty() {
+                self.show_module_breakdown("Toolkit module breakdown", &modules);
+            }
+        }
+
+        let findings = storage
+            .list_findings(
+                None,
+                FindingContext {
+                    scope: Some(&run.scope_id),
+                    run: Some(&run.id),
+                },
+                None,
+                None,
+                10_000,
+                "severity",
+            )
+            .await?;
+        if findings.is_empty() {
+            self.show_info("No findings recorded for this toolkit run");
+        } else {
+            let rows: Vec<(String, String, String, String)> = findings
+                .iter()
+                .map(|f| {
+                    (
+                        f.id.clone(),
+                        f.severity.clone(),
+                        f.title.clone(),
+                        f.asset.clone(),
+                    )
+                })
+                .collect();
+            self.show_findings_table(&rows);
+        }
+        self.wait_enter();
         Ok(())
     }
 

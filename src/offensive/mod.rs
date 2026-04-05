@@ -10,6 +10,7 @@ pub mod cloud;
 pub mod correlation;
 pub mod discovery;
 pub mod orchestrator;
+pub mod toolkit;
 pub mod web;
 
 pub use orchestrator::OffensiveOrchestrator;

@@ -1,6 +1,6 @@
 use aegis_osint::cli::menu::{
-    DefensiveMenuOption, MainMenuOption, Menu, OffensiveMenuOption, ScopeMenuOption,
-    SettingsMenuOption,
+    DefensiveMenuOption, MainMenuOption, Menu, OffensiveMenuOption, OsintToolkitMenuOption,
+    ScopeMenuOption, SettingsMenuOption,
 };
 use std::collections::HashSet;
 use std::mem::discriminant;
@@ -15,6 +15,7 @@ fn test_menu_can_be_constructed() {
 fn test_main_menu_variants_are_unique() {
     let variants = [
         MainMenuOption::OffensiveMode,
+        MainMenuOption::OsintToolkit,
         MainMenuOption::DefensiveMode,
         MainMenuOption::ManageScopes,
         MainMenuOption::ViewFindings,
@@ -45,6 +46,15 @@ fn test_submenu_variants_are_unique() {
         DefensiveMenuOption::ConfigureAlerts,
         DefensiveMenuOption::Back,
     ];
+    let toolkit = [
+        OsintToolkitMenuOption::RunAllSuites,
+        OsintToolkitMenuOption::RunDnsSuite,
+        OsintToolkitMenuOption::RunRepoSuite,
+        OsintToolkitMenuOption::RunTlsSuite,
+        OsintToolkitMenuOption::RunLeakSuite,
+        OsintToolkitMenuOption::ViewSuiteResults,
+        OsintToolkitMenuOption::Back,
+    ];
     let scope = [
         ScopeMenuOption::ImportScope,
         ScopeMenuOption::CreateScope,
@@ -69,9 +79,11 @@ fn test_submenu_variants_are_unique() {
     let defensive_unique: HashSet<_> = defensive.iter().map(discriminant).collect();
     let scope_unique: HashSet<_> = scope.iter().map(discriminant).collect();
     let settings_unique: HashSet<_> = settings.iter().map(discriminant).collect();
+    let toolkit_unique: HashSet<_> = toolkit.iter().map(discriminant).collect();
 
     assert_eq!(offensive.len(), offensive_unique.len());
     assert_eq!(defensive.len(), defensive_unique.len());
+    assert_eq!(toolkit.len(), toolkit_unique.len());
     assert_eq!(scope.len(), scope_unique.len());
     assert_eq!(settings.len(), settings_unique.len());
 }

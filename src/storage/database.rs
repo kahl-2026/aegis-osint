@@ -641,6 +641,31 @@ impl Storage {
         Ok(())
     }
 
+    /// Update metadata blob for a scan run
+    pub async fn update_scan_metadata(&self, id: &str, metadata: &serde_json::Value) -> Result<()> {
+        let metadata_json = serde_json::to_string(metadata)?;
+        sqlx::query("UPDATE scan_runs SET metadata = ? WHERE id = ?")
+            .bind(metadata_json)
+            .bind(id)
+            .execute(self.pool.as_ref())
+            .await?;
+        Ok(())
+    }
+
+    /// Get metadata blob for a scan run
+    pub async fn get_scan_metadata(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT metadata FROM scan_runs WHERE id = ?")
+                .bind(id)
+                .fetch_optional(self.pool.as_ref())
+                .await?;
+
+        match row {
+            Some((Some(metadata),)) => Ok(Some(serde_json::from_str(&metadata)?)),
+            Some((None,)) | None => Ok(None),
+        }
+    }
+
     /// List scan runs
     pub async fn list_scan_runs(
         &self,

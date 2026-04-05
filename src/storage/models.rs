@@ -167,10 +167,21 @@ pub struct AttackSurfaceSummary {
 
 /// Scan execution result summary
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleSummary {
+    pub module: String,
+    pub assets_discovered: usize,
+    pub findings_created: usize,
+    pub evidence_collected: usize,
+}
+
+/// Scan execution result summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanSummary {
     pub assets_count: usize,
     pub findings_count: usize,
+    pub evidence_count: usize,
     pub duration_secs: f64,
+    pub module_summaries: Vec<ModuleSummary>,
 }
 
 /// Defensive scan result
